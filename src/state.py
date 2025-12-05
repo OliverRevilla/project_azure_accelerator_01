@@ -1,7 +1,8 @@
 import asyncio
 from typing import Optional, List, Dict, Any
 
-class GlobalState:
+class SessionState:
+    # Represents the state of an active assistant session
     def __init__(self):
         self.state = "idle"
         self.message = "Select 'Start Session' to begin"
@@ -44,6 +45,3 @@ class GlobalState:
         # Push a message to all active SSE queues
         for q in self.sse_queues:
             q.put_nowait(data)
-
-
-GLOBAL_STATE = GlobalState()

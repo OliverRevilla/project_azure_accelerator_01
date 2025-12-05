@@ -93,7 +93,9 @@ setInterval(()=>{
 // =============================
 function openEventSource(){
   if(eventSource){ eventSource.close(); }
-  eventSource = new EventSource('/events');
+  // UPDATED: Include session_id in query to ensure connection works even if cookies are blocked
+  const url = '/events?session_id=' + encodeURIComponent(window.SESSION_ID || '');
+  eventSource = new EventSource(url);
   eventSource.onmessage = handleSSEMessage;
   eventSource.onerror = () => log('SSE connection error (will retry if closed).','warn');
   log('SSE connection opened');
@@ -157,7 +159,10 @@ function handleControlEvent(data) {
 
 function openAudioWebSocket(){
   try{
-    const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.hostname + ':8765/ws-audio';
+    const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    // UPDATED: Include session_id in query for WebSocket
+    const wsUrl = `${protocol}${location.hostname}:8765/ws-audio?session_id=${encodeURIComponent(window.SESSION_ID || '')}`;
+    
     wsAudio = new WebSocket(wsUrl);
     wsAudio.binaryType = 'arraybuffer';
     wsAudio.onopen = () => log('Audio websocket opened','debug');
@@ -277,7 +282,9 @@ function flushPendingAudio(){
 
 async function sendAudioChunk(b64){
   try {
-    const r = await fetch('/audio-chunk', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({audio: b64}) });
+    // UPDATED: Include session_id in query for HTTP POST
+    const url = '/audio-chunk?session_id=' + encodeURIComponent(window.SESSION_ID || '');
+    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({audio: b64}) });
     if(!r.ok){
       if(r.status === 400) {
         log('Audio chunk rejected: '+ r.status,'warn');
@@ -351,7 +358,9 @@ async function startSession(){
   setSessionButtonState('starting');
   
   try {
-    const response = await fetch('/start-session', {method:'POST'});
+    // UPDATED: Include session_id in query
+    const url = '/start-session?session_id=' + encodeURIComponent(window.SESSION_ID || '');
+    const response = await fetch(url, {method:'POST'});
     const result = await response.json();
     
     if(!response.ok){
@@ -375,7 +384,10 @@ async function stopSession(){
   log('Stopping session…');
   
   // Stop server session
-  try { await fetch('/stop-session', {method:'POST'}); } catch(_){ }
+  try { 
+      const url = '/stop-session?session_id=' + encodeURIComponent(window.SESSION_ID || '');
+      await fetch(url, {method:'POST'}); 
+  } catch(_){ }
   
   // Clean up connections
   closeConnections();
