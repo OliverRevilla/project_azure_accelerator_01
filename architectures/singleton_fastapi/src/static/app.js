@@ -7,19 +7,22 @@ const statusBox = document.getElementById('statusBox');
 const statusText = document.getElementById('statusText');
 const statusMsg = document.getElementById('statusMsg');
 const logEl = document.getElementById('log');
-const chatContainer = document.getElementById('chatContainer'); // NEW
 
 // =============================
 // CONFIGURATION & STATE
 // =============================
+
+// Audio configuration
 const TARGET_RATE = 24000;
 const CHUNK_DURATION_MS = 150;
 const MAX_LOG_LINES = 250;
 
+// Connection state
 let eventSource = null;
 let wsAudio = null;
 let stopped = false;
 
+// Audio capture state
 let micStream = null;
 let audioContext = null;
 let processorNode = null;
@@ -27,9 +30,12 @@ let capturing = false;
 let pendingFloat = [];
 let inputSampleRate = 48000;
 
+// Audio playback state
 let nextPlayTime = 0;
 let suspendPlayback = false;
 let assistantSources = [];
+
+// UI state
 let readySince = null;
 
 function log(msg, level='info', obj){
@@ -73,32 +79,21 @@ function updateStatusUI(data){
     startMicCapture().catch(e=>log('Mic capture failed: '+e,'error'));
   }
 }
-
-// =============================
-// NEW: CHAT UI HANDLING
-// =============================
-function renderChatMessage(msg) {
-    // msg = { role: "user" | "assistant", text: "..." }
-    
-    // Remove placeholder if present
-    const placeholder = chatContainer.querySelector('.chat-placeholder');
-    if(placeholder) placeholder.remove();
-
-    const bubble = document.createElement('div');
-    bubble.className = `chat-bubble ${msg.role === 'user' ? 'chat-user' : 'chat-assistant'}`;
-    bubble.textContent = msg.text;
-    
-    chatContainer.appendChild(bubble);
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-}
+// Gentle nudge: if still Ready after 3s and user hasn't spoken (no transition to listening), remind them
+setInterval(()=>{
+  if(readySince && (performance.now() - readySince) > 3000 && statusText.textContent === 'ready') {
+    if(!statusMsg.textContent.includes('Speak')) {
+      statusMsg.textContent = 'Ready – start speaking now.';
+    }
+  }
+}, 1000);
 
 // =============================
 // SSE HANDLING
 // =============================
 function openEventSource(){
   if(eventSource){ eventSource.close(); }
-  const url = '/events?session_id=' + encodeURIComponent(window.SESSION_ID || '');
-  eventSource = new EventSource(url);
+  eventSource = new EventSource('/events');
   eventSource.onmessage = handleSSEMessage;
   eventSource.onerror = () => log('SSE connection error (will retry if closed).','warn');
   log('SSE connection opened');
@@ -117,9 +112,6 @@ function handleSSEMessage(ev) {
       case 'audio':
         handleAudioData(data);
         break;
-      case 'chat_message': // NEW CASE
-        renderChatMessage(data.message);
-        break;
       case 'log':
         log(data.msg || data.event_type || JSON.stringify(data), data.level || 'info');
         break;
@@ -134,6 +126,8 @@ function handleSSEMessage(ev) {
 
 function handleStatusUpdate(data) {
   updateStatusUI(data);
+  
+  // Resume playback when assistant starts new response or reaches ready
   if(data.state === 'ready' || data.state === 'assistant_speaking') {
     if(suspendPlayback) {
       log('Resuming assistant playback (' + data.state + ')','debug');
@@ -143,7 +137,9 @@ function handleStatusUpdate(data) {
 }
 
 function handleAudioData(data) {
-  if(suspendPlayback) return;
+  if(suspendPlayback) {
+    return; // Drop audio while playback suspended
+  }
   playAssistantPcm16(data.audio);
 }
 
@@ -158,11 +154,10 @@ function handleControlEvent(data) {
 // =============================
 // AUDIO CAPTURE & ENCODE
 // =============================
+
 function openAudioWebSocket(){
   try{
-    const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    const wsUrl = `${protocol}${location.hostname}:8765/ws-audio?session_id=${encodeURIComponent(window.SESSION_ID || '')}`;
-    
+    const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.hostname + ':8765/ws-audio';
     wsAudio = new WebSocket(wsUrl);
     wsAudio.binaryType = 'arraybuffer';
     wsAudio.onopen = () => log('Audio websocket opened','debug');
@@ -184,7 +179,7 @@ async function startMicCapture(){
   log('Requesting microphone…');
   micStream = await navigator.mediaDevices.getUserMedia({audio: { echoCancellation:true, noiseSuppression:true, channelCount:1 }, video:false});
   const source = audioContext.createMediaStreamSource(micStream);
-  const BUFFER_SIZE = 4096;
+  const BUFFER_SIZE = 4096; // 4096 / 48000 ~= 85ms
   processorNode = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
   let lastSend = performance.now();
   processorNode.onaudioprocess = (ev) => {
@@ -192,13 +187,14 @@ async function startMicCapture(){
     const input = ev.inputBuffer.getChannelData(0);
     pendingFloat.push(new Float32Array(input));
     const now = performance.now();
+      // Send every CHUNK_DURATION_MS or if backlog large
     if(now - lastSend >= CHUNK_DURATION_MS || pendingFloat.length > 12){
       flushPendingAudio();
       lastSend = now;
     }
   };
   source.connect(processorNode);
-  processorNode.connect(audioContext.destination);
+  processorNode.connect(audioContext.destination); // required for some browsers
   capturing = true;
   log('Microphone capture started');
 }
@@ -236,6 +232,7 @@ function downsampleToInt16(float32, inRate, outRate){
     }
     return int16;
   }
+  // Linear interpolation resampling for better quality than nearest-sample
   const ratio = inRate / outRate;
   const newLen = Math.round(float32.length / ratio);
   const int16 = new Int16Array(newLen);
@@ -265,12 +262,14 @@ function flushPendingAudio(){
   if(!merged || !merged.length) return;
   const int16 = downsampleToInt16(merged, inputSampleRate, TARGET_RATE);
   if(!int16) return;
+  // Prefer binary websocket if available
   try{
     if(wsAudio && wsAudio.readyState === WebSocket.OPEN){
+      // Int16Array underlying buffer is an ArrayBuffer of little-endian PCM16
       wsAudio.send(int16.buffer);
       return;
     }
-  }catch(e){ }
+  }catch(e){ /* fallthrough to HTTP fallback */ }
   const b64 = int16ToBase64(int16);
   if(!b64) return;
   sendAudioChunk(b64);
@@ -278,8 +277,7 @@ function flushPendingAudio(){
 
 async function sendAudioChunk(b64){
   try {
-    const url = '/audio-chunk?session_id=' + encodeURIComponent(window.SESSION_ID || '');
-    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({audio: b64}) });
+    const r = await fetch('/audio-chunk', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({audio: b64}) });
     if(!r.ok){
       if(r.status === 400) {
         log('Audio chunk rejected: '+ r.status,'warn');
@@ -292,6 +290,7 @@ async function sendAudioChunk(b64){
   }
 }
 
+// Flush any straggling audio periodically (safety)
 setInterval(()=>{ if(capturing) flushPendingAudio(); }, 500);
 
 // =============================
@@ -307,7 +306,7 @@ function playAssistantPcm16(b64){
     const samples = view.byteLength / 2;
     const floatBuf = new Float32Array(samples);
     for(let i=0;i<samples;i++){
-      const s = view.getInt16(i*2, true) / 0x8000;
+      const s = view.getInt16(i*2, true) / 0x8000; // little-endian
       floatBuf[i] = s;
     }
     const audioBuf = audioContext.createBuffer(1, floatBuf.length, TARGET_RATE);
@@ -315,13 +314,14 @@ function playAssistantPcm16(b64){
     const src = audioContext.createBufferSource();
     src.buffer = audioBuf;
     src.connect(audioContext.destination);
+    // track source so we can stop immediately on interrupt
     assistantSources.push(src);
     src.addEventListener('ended', () => {
       const i = assistantSources.indexOf(src);
       if(i !== -1) assistantSources.splice(i,1);
     });
     const now = audioContext.currentTime;
-    if(nextPlayTime < now) nextPlayTime = now + 0.01;
+    if(nextPlayTime < now) nextPlayTime = now + 0.01; // small lead
     src.start(nextPlayTime);
     nextPlayTime += audioBuf.duration;
   } catch(e) {
@@ -335,8 +335,9 @@ function stopAllAssistantPlayback(){
       try{ if(typeof s.stop === 'function') s.stop(0); } catch(_){}
       try{ s.disconnect(); } catch(_){}
     }
-  }catch(e){ }
+  }catch(e){ /* ignore */ }
   assistantSources = [];
+  // reset scheduling so future audio plays immediately when resumed
   try{ nextPlayTime = audioContext.currentTime; } catch(_){}
   try{ log('stopAllAssistantPlayback executed at '+ new Date().toISOString(), 'debug'); } catch(_){}
 }
@@ -348,18 +349,22 @@ function stopAllAssistantPlayback(){
 async function startSession(){
   stopped = false;
   setSessionButtonState('starting');
+  
   try {
-    const url = '/start-session?session_id=' + encodeURIComponent(window.SESSION_ID || '');
-    const response = await fetch(url, {method:'POST'});
+    const response = await fetch('/start-session', {method:'POST'});
     const result = await response.json();
+    
     if(!response.ok){
       handleStartSessionError(result, response.status);
       return;
     }
+    
+    // Session started successfully
     updateStatusUI(result.status || result);
     openEventSource();
     openAudioWebSocket();
     log('Session started successfully');
+    
   } catch(error){
     handleStartSessionError(null, error.message);
   }
@@ -368,10 +373,11 @@ async function startSession(){
 async function stopSession(){
   stopped = true;
   log('Stopping session…');
-  try { 
-      const url = '/stop-session?session_id=' + encodeURIComponent(window.SESSION_ID || '');
-      await fetch(url, {method:'POST'}); 
-  } catch(_){ }
+  
+  // Stop server session
+  try { await fetch('/stop-session', {method:'POST'}); } catch(_){ }
+  
+  // Clean up connections
   closeConnections();
   stopMicCapture();
   updateStatusUI({state:'stopped', message:'Session stopped.'});
@@ -400,8 +406,13 @@ function closeConnections() {
   if(wsAudio){ wsAudio.close(); wsAudio = null; }
 }
 
+// =============================
+// EVENT LISTENERS & INITIALIZATION
+// =============================
+
 startBtn.addEventListener('click', startSession);
 stopBtn.addEventListener('click', stopSession);
 window.addEventListener('beforeunload', closeConnections);
 
+// Passive init (establish SSE early for existing session)
 openEventSource();

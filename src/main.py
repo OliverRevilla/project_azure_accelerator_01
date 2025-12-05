@@ -17,11 +17,15 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
-# Modular Imports
 from config import logger, validate_env, get_env_display
 from session_manager import manager
 from state import SessionState
 from assistant import BasicVoiceAssistant
+# NEW: Import DB init
+from database import init_db 
+
+# Initialize Tables on startup
+init_db()
 
 app = FastAPI(title="Voice Assistant Multi-User")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -92,6 +96,15 @@ async def sse_endpoint(request: Request, state: SessionState = Depends(get_sessi
                 "connected": state.connected
             })
         }
+
+        # 2. NEW: Send existing Chat History to the frontend on reconnect
+        for msg in state.chat_history:
+            yield {
+                "data": json.dumps({
+                    "type": "chat_message",
+                    "message": msg
+                })
+            }
 
         try:
             while True:
@@ -170,7 +183,9 @@ async def audio_chunk(request: Request, state: SessionState = Depends(get_sessio
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     
-    # WebSocket Manual Extraction
+# ==============================================================================
+# WEB SOCKET AUDIO STREAMING
+# ==============================================================================
     session_id = websocket.cookies.get("session_id")
     if not session_id:
         session_id = websocket.query_params.get("session_id")
@@ -193,6 +208,10 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
     except Exception as e:
         logger.error(f"WebSocket Error: {e}")
+
+# ==============================================================================
+# MAIN ENTRY POINT
+# ==============================================================================
 
 if __name__ == "__main__":
     import uvicorn

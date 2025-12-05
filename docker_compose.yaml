@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # Service 1: The Voice Assistant App
+  voice-app:
+    build: .
+    ports:
+      - "8000:8000"  # Map localhost:8000 to container:8000
+    depends_on:
+      - db
+    environment:
+      # Override the default SQLite path to use the MySQL container
+      - DATABASE_URL=mysql+pymysql://user:password@db:3306/voice_db
+      # Pass through your Azure credentials
+      # You can create a .env file in the same folder, and Docker will read it
+      - AZURE_VOICE_LIVE_ENDPOINT=${AZURE_VOICE_LIVE_ENDPOINT}
+      - AZURE_VOICE_LIVE_API_KEY=${AZURE_VOICE_LIVE_API_KEY}
+      - VOICE_LIVE_MODEL=${VOICE_LIVE_MODEL}
+      - VOICE_LIVE_VOICE=${VOICE_LIVE_VOICE}
+      - VOICE_LIVE_INSTRUCTIONS=${VOICE_LIVE_INSTRUCTIONS}
+    volumes:
+      # Optional: Mount code for live editing without rebuilding
+      # - ./src:/src
+      pass:
+
+  # Service 2: The Database (MySQL)
+  db:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_DATABASE: voice_db
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+      MYSQL_ROOT_PASSWORD: rootpassword
+    ports:
+      - "3306:3306" # Expose 3306 if you want to inspect via Workbench
+    volumes:
+      - db_data:/var/lib/mysql
+
+volumes:
+  db_data:

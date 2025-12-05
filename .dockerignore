@@ -23,6 +23,17 @@ out
 coverage
 *.cache
 
-# Ignore Docker-related files
-Dockerfile
-docker-compose.yml
+pycache
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+chat_history.db
+*.log
+.DS_Store
+.git
+.gitignore
