@@ -37,3 +37,4 @@ chat_history.db
 .DS_Store
 .git
 .gitignore
+.db

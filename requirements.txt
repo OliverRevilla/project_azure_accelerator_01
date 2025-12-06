@@ -42,3 +42,4 @@ sse-starlette
 jinja2
 sqlalchemy==2.0.25
 pymysql==1.1.0  # Driver for MySQL
+pyodbc==5.0.1

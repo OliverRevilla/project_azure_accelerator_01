@@ -8,7 +8,7 @@ logs/
 
 # Environment variables
 .env
-
+.db
 # Build output
 dist/
 build/

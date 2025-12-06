@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-# Script to deploy the Flask app to Azure App Service using a container from ACR
+# Script to deploy the FastAPI app to Azure App Service using a container from ACR
 # and provision AI Foundry with gtp-realtime model using AZD.
+# NOW INCLUDES: Azure SQL Database provisioning
 
 # Only change the rg (resource group) and location variables below if needed.
 
@@ -19,7 +20,7 @@ location="eastus2" # Or a location near you
 # ============================================================================
 clear
 echo "Select deployment mode:"
-echo "  1) Full deployment (AI Foundry + Container + App Service) - ~15 minutes"
+echo "  1) Full deployment (AI Foundry + SQL + Container + App Service) - ~20 minutes"
 echo "  2) Container update only (requires full deployment first) - ~5 minutes"
 echo ""
 read -p "Enter choice (1 or 2): " deploy_mode
@@ -60,9 +61,11 @@ while [ ${#acr_name} -lt 5 ]; do
     acr_name="${acr_name}a"
 done
 
-# App Service plan and webapp (hyphens allowed)
+# App Service plan, webapp, and SQL (hyphens allowed)
 appsvc_plan="${safe_user}-appplan-${short_hash}"
 webapp_name="${safe_user}-webapp-${short_hash}"
+sql_server_name="${safe_user}-sql-${short_hash}"
+sql_db_name="voice_db"
 image="rt-voice"
 tag="v1"
 azd_env_name="gpt-realtime" # Forced as unique at each run
@@ -147,7 +150,7 @@ VOICE_LIVE_VERBOSE="" #Suppresses excessive logging to the terminal if running l
 EOF
 
 clear
-echo "Starting FULL deployment with AZD provisioning + App Service, takes about 15 minutes..."
+echo "Starting FULL deployment with AZD provisioning + SQL + App Service..."
 
 # Step 1: Provision AI Foundry with GPT Realtime model using AZD
 echo
@@ -203,9 +206,36 @@ fi
 
 echo "  - AI Foundry provisioning complete!"
 
-# Step 2: Continue with App Service deployment
+# Step 2: Create SQL Database
 echo
-echo "Step 2: Create ACR and App Service resources..."
+echo "Step 2: Creating Azure SQL Database..."
+
+# Generate a complex password (required by Azure SQL)
+# Uses openssl to generate bytes, base64 encodes them, keeps alphanumeric, and adds required complexity characters
+sql_admin_user="azureuser"
+sql_admin_pass="$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)A1!"
+
+echo "  - Creating SQL Server '${sql_server_name}'..."
+az sql server create -n $sql_server_name -g $rg -l $location \
+    --admin-user $sql_admin_user --admin-password $sql_admin_pass >/dev/null
+
+echo "  - Creating SQL Database '${sql_db_name}'..."
+az sql db create --resource-group $rg --server $sql_server_name \
+    --name $sql_db_name --service-objective Basic >/dev/null
+
+echo "  - Configuring Firewall to allow Azure Services (App Service)..."
+az sql server firewall-rule create --resource-group $rg --server $sql_server_name \
+    --name AllowAzureServices --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 >/dev/null
+
+# Construct the SQLAlchemy connection string for Azure SQL (using ODBC Driver 18)
+# We do NOT put this in .env to avoid saving credentials to disk
+azure_sql_connection_string="mssql+pyodbc://${sql_admin_user}:${sql_admin_pass}@${sql_server_name}.database.windows.net/${sql_db_name}?driver=ODBC+Driver+18+for+SQL+Server"
+
+echo "  - SQL Database provisioning complete!"
+
+# Step 3: Continue with App Service deployment
+echo
+echo "Step 3: Create ACR and App Service resources..."
 
 # Create ACR and build image from Dockerfile
 echo "  - Creating Azure Container Registry resource..."
@@ -249,7 +279,7 @@ fi
 echo "  - Container image build complete!"
 
 echo
-echo "Step 3: Configuring Azure App Service with updated credentials..."
+echo "Step 4: Configuring Azure App Service with updated credentials..."
 
 echo "  - Gathering environment variables from .env file for App Service deployment.."
 # Parse the .env file exists in the repo root, and bring values into the  script environment 
@@ -277,13 +307,14 @@ if [ -f .env ]; then
     done < .env
 fi
 
-# Build env_vars using values from .env - one file to update
+# Build env_vars using values from .env PLUS the new SQL Connection String
 env_vars=(
     AZURE_VOICE_LIVE_ENDPOINT="${AZURE_VOICE_LIVE_ENDPOINT}"
     AZURE_VOICE_LIVE_API_KEY="${AZURE_VOICE_LIVE_API_KEY}"
     VOICE_LIVE_MODEL="${VOICE_LIVE_MODEL}"
     VOICE_LIVE_VOICE="${VOICE_LIVE_VOICE}"
     VOICE_LIVE_INSTRUCTIONS="${VOICE_LIVE_INSTRUCTIONS}"
+    DATABASE_URL="${azure_sql_connection_string}"
 )
 
 echo "  - Retrieving ACR credentials so App Service can access the container image..."
@@ -338,6 +369,7 @@ echo
 echo "Deployment complete!"
 echo
 echo " - AI Foundry with GPT Realtime model: PROVISIONED"
+echo " - Azure SQL Database: PROVISIONED"
 echo " - Flask app deployed to App Service: READY"
 echo " - Your app is available at: https://${webapp_name}.azurewebsites.net"
 echo
