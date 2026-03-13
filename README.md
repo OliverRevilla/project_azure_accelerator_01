@@ -69,4 +69,91 @@ The solution is built on Azure Platform-as-a-Service (PaaS) components to ensure
 
 3. **Access:** Open the output URL in Chrome, Edge, or Safari.
 
-4. **Testing** cd ./src/ uvicorn main:app --reload
+4. **Testing** cd ./src/ uvicorn main:app --reload |or execute| main.py
+
+---
+
+## CI/CD with GitHub Actions
+
+The workflow at [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) automates deployments to Azure on every push to `main`. It replicates what `azdeploy.sh` option 2 does: builds the Docker image inside ACR and restarts the App Service to pull it.
+
+> **Prerequisite:** Azure infrastructure must already be provisioned once via `bash azdeploy.sh` (option 1) before the workflow can run.
+
+### One-time setup
+
+#### Step 1 — Create an Azure Service Principal with OIDC
+
+Run these commands in Azure Cloud Shell or any terminal with `az` installed. Replace `<subscription-id>` with your own.
+
+```bash
+# Create the App Registration
+az ad app create --display-name "github-actions-voicelive"
+
+# Capture the client and tenant IDs
+CLIENT_ID=$(az ad app list --display-name "github-actions-voicelive" --query "[0].appId" -o tsv)
+TENANT_ID=$(az account show --query tenantId -o tsv)
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+APP_OBJECT_ID=$(az ad app list --display-name "github-actions-voicelive" --query "[0].id" -o tsv)
+
+# Create the service principal
+az ad sp create --id $CLIENT_ID
+
+SP_OBJECT_ID=$(az ad sp show --id $CLIENT_ID --query id -o tsv)
+
+# Add federated credential so GitHub Actions can authenticate without a password
+# Replace <your-github-username> and <your-repo-name>
+az ad app federated-credential create \
+  --id $APP_OBJECT_ID \
+  --parameters '{
+    "name": "github-main",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subject": "repo:<your-github-username>/<your-repo-name>:ref:refs/heads/main",
+    "audiences": ["api://AzureADTokenExchange"]
+  }'
+
+echo "CLIENT_ID: $CLIENT_ID"
+echo "TENANT_ID: $TENANT_ID"
+echo "SUBSCRIPTION_ID: $SUBSCRIPTION_ID"
+```
+
+#### Step 2 — Grant the service principal the required roles
+
+```bash
+RG="rg-voicelive"                          # your resource group
+ACR_ID=$(az acr show -n <ACR_NAME> -g $RG --query id -o tsv)
+WEBAPP_ID=$(az webapp show -n <WEBAPP_NAME> -g $RG --query id -o tsv)
+
+# Push images to ACR
+az role assignment create --assignee $SP_OBJECT_ID --role AcrPush --scope $ACR_ID
+
+# Update container config and restart the App Service
+az role assignment create --assignee $SP_OBJECT_ID --role "Website Contributor" --scope $WEBAPP_ID
+```
+
+#### Step 3 — Add GitHub Secrets
+
+Go to your repository → **Settings → Secrets and variables → Actions → New repository secret** and add:
+
+| Secret name | Where to find the value |
+|---|---|
+| `AZURE_CLIENT_ID` | `$CLIENT_ID` from Step 1 |
+| `AZURE_TENANT_ID` | `$TENANT_ID` from Step 1 |
+| `AZURE_SUBSCRIPTION_ID` | `$SUBSCRIPTION_ID` from Step 1 |
+| `ACR_NAME` | Azure Portal → Container registries, or output of `azdeploy.sh` |
+| `WEBAPP_NAME` | Azure Portal → App Services, or output of `azdeploy.sh` |
+| `RESOURCE_GROUP` | `rg-voicelive` (default) |
+
+> **Tip — finding ACR_NAME and WEBAPP_NAME:** If you no longer have the deployment output, run:
+> ```bash
+> az acr list -g rg-voicelive --query "[].name" -o tsv
+> az webapp list -g rg-voicelive --query "[].name" -o tsv
+> ```
+
+### How it works
+
+After setup, every merge into `main` automatically:
+1. Builds a new Docker image inside ACR (tagged with the git commit SHA **and** `latest`)
+2. Updates the App Service to point to the new SHA-tagged image
+3. Restarts the App Service so the new container is pulled immediately
+
+The live URL is printed at the end of each Actions run.

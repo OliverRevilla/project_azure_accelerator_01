@@ -1,0 +1,79 @@
+name: Deploy to Azure App Service
+
+# Triggers on every push to main (i.e. when a PR is merged).
+# Assumes Azure infrastructure (ACR, App Service, SQL, AI Foundry) is already
+# provisioned via azdeploy.sh option 1.  This workflow only automates the
+# "container update" step (azdeploy.sh option 2).
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build & Deploy Container
+    runs-on: ubuntu-latest
+
+    # Required for OIDC token exchange with Azure (no long-lived secrets needed)
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout source code
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2. Authenticate to Azure using OIDC federated credentials
+      #    Requires: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+      #    set as GitHub Secrets (no passwords stored).
+      # -----------------------------------------------------------------------
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # -----------------------------------------------------------------------
+      # 3. Build the Docker image remotely inside ACR (no local Docker needed).
+      #    Two tags are pushed:
+      #      - git SHA  → unique, immutable reference for this exact commit
+      #      - latest   → convenience alias always pointing to the newest build
+      # -----------------------------------------------------------------------
+      - name: Build image in Azure Container Registry
+        run: |
+          az acr build \
+            --registry ${{ secrets.ACR_NAME }} \
+            --image ${{ secrets.ACR_NAME }}.azurecr.io/rt-voice:${{ github.sha }} \
+            --image ${{ secrets.ACR_NAME }}.azurecr.io/rt-voice:latest \
+            --file Dockerfile \
+            .
+
+      # -----------------------------------------------------------------------
+      # 4. Point the App Service at the new image tag (the SHA-tagged one for
+      #    traceability) and restart so the new container is pulled immediately.
+      # -----------------------------------------------------------------------
+      - name: Update App Service container image
+        run: |
+          az webapp config container set \
+            --name ${{ secrets.WEBAPP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --container-image-name ${{ secrets.ACR_NAME }}.azurecr.io/rt-voice:${{ github.sha }}
+
+      - name: Restart App Service
+        run: |
+          az webapp restart \
+            --name ${{ secrets.WEBAPP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }}
+
+      # -----------------------------------------------------------------------
+      # 5. Print the live URL for quick reference in the Actions run summary.
+      # -----------------------------------------------------------------------
+      - name: Print deployment URL
+        run: |
+          echo "Deployment complete."
+          echo "App URL: https://${{ secrets.WEBAPP_NAME }}.azurewebsites.net"
