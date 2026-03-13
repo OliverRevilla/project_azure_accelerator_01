@@ -77,7 +77,7 @@ if [ "$deploy_mode" = "2" ]; then
     clear
     echo "Starting container update (rebuild + redeploy)..."
     echo ""
-    
+
     # Verify that the resources exist
     echo "  - Verifying existing resources..."
     if ! az acr show -n $acr_name -g $rg >/dev/null 2>&1; then
@@ -85,15 +85,15 @@ if [ "$deploy_mode" = "2" ]; then
         echo "You must run a full deployment (option 1) first."
         exit 1
     fi
-    
+
     if ! az webapp show -n $webapp_name -g $rg >/dev/null 2>&1; then
         echo "ERROR: Web App '$webapp_name' not found in resource group '$rg'"
         echo "You must run a full deployment (option 1) first."
         exit 1
     fi
-    
+
     echo "  - Resources verified: ACR and Web App exist"
-    
+
     # Build image
     echo "  - Building updated image in ACR...(takes 3-5 minutes)"
     max_retries=3
@@ -101,7 +101,7 @@ if [ "$deploy_mode" = "2" ]; then
 
     while [ "${retry_count}" -lt "${max_retries}" ]; do
         echo "  - Attempt $((retry_count + 1)) of $max_retries: building image..."
-        
+
         az acr build -r $acr_name --image ${acr_name}.azurecr.io/${image}:${tag} --file Dockerfile . >/dev/null 2>&1
 
         if az acr repository show --name $acr_name --repository $image >/dev/null 2>&1; then
@@ -121,11 +121,11 @@ if [ "$deploy_mode" = "2" ]; then
         echo "ERROR: Failed to build image after $max_retries attempts"
         exit 1
     fi
-    
+
     # Restart web app to pull new image
     echo "  - Restarting Web App to pull updated container..."
     az webapp restart --name "$webapp_name" --resource-group "$rg" >/dev/null
-    
+
     echo ""
     echo "Container update complete!"
     echo " - Your app is available at: https://${webapp_name}.azurewebsites.net"
@@ -178,7 +178,7 @@ fi
 azd config set alpha.infrastructure.deployment.name "azd-gpt-realtime-$(date +%s)"
 # Clear any cached deployment state and force deployment
 azd env refresh --no-prompt 2>/dev/null || true
-azd provision 
+azd provision
 
 echo "  - Retrieving AI Foundry endpoint, API key, and model name..."
 endpoint=$(azd env get-values --output json | jq -r '.AZURE_OPENAI_ENDPOINT')
@@ -250,7 +250,7 @@ retry_count=0
 
 while [ $retry_count -lt $max_retries ]; do
     echo "  - Attempt $((retry_count + 1)) of $max_retries: building image..."
-    
+
     # Run the build command
     az acr build -r $acr_name --image ${acr_name}.azurecr.io/${image}:${tag} --file Dockerfile . >/dev/null 2>&1
 
@@ -261,7 +261,7 @@ while [ $retry_count -lt $max_retries ]; do
     else
         echo "  - Image not found in ACR, retrying build..."
         retry_count=$((retry_count + 1))
-    if [ "${retry_count}" -lt "${max_retries}" ]; then
+        if [ "${retry_count}" -lt "${max_retries}" ]; then
             echo "  - Waiting 5 seconds before retry..."
             sleep 5
         fi
@@ -282,7 +282,7 @@ echo
 echo "Step 4: Configuring Azure App Service with updated credentials..."
 
 echo "  - Gathering environment variables from .env file for App Service deployment.."
-# Parse the .env file exists in the repo root, and bring values into the  script environment 
+# Parse the .env file exists in the repo root, and bring values into the  script environment
 if [ -f .env ]; then
     while IFS='=' read -r key val; do
         # Trim whitespace
@@ -319,7 +319,7 @@ env_vars=(
 
 echo "  - Retrieving ACR credentials so App Service can access the container image..."
 # Use the retrieved ACR credentials to allow AppSvc to pull the image.
-acr_user=$(az acr credential show -n $acr_name --query username -o tsv | tr -d '\r')  
+acr_user=$(az acr credential show -n $acr_name --query username -o tsv | tr -d '\r')
 acr_pass=$(az acr credential show -n $acr_name --query passwords[0].value -o tsv | tr -d '\r')
 acr_login_server=$(az acr show --name $acr_name --query "loginServer" --output tsv | tr -d '\r')
 acr_image=${acr_login_server}/${image}:${tag}
