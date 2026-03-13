@@ -6,7 +6,7 @@
 
 # Only change the rg (resource group) and location variables below if needed.
 
-rg="rg-voicelive" # Replace with your resource group
+rg="rg-voicelive_1" # Replace with your resource group
 location="eastus2" # Or a location near you
 
 
