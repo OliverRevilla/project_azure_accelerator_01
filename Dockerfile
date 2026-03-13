@@ -8,7 +8,6 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /src
 
 # Install system dependencies
-# Added: curl and gnupg2 for MS keys, unixodbc-dev for pyodbc compilation
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
@@ -17,8 +16,12 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Add Microsoft Repo for ODBC Driver 18 (Debian 12/Bookworm)
-RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
-    && curl https://packages.microsoft.com/config/debian/12/prod.list > /etc/apt/sources.list.d/mssql-release.list
+# apt-key is deprecated on Debian 12; use a signed gpg keyring file instead
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+    | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] \
+https://packages.microsoft.com/debian/12/prod bookworm main" \
+    > /etc/apt/sources.list.d/mssql-release.list
 
 # Install the ODBC driver
 RUN apt-get update \
@@ -37,5 +40,4 @@ COPY src/ .
 # Expose the port
 EXPOSE 8000
 
-# FIXED: Changed "main:main" to "main:app" to match your code
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

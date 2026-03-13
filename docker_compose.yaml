@@ -18,11 +18,6 @@ services:
       - VOICE_LIVE_MODEL=${VOICE_LIVE_MODEL}
       - VOICE_LIVE_VOICE=${VOICE_LIVE_VOICE}
       - VOICE_LIVE_INSTRUCTIONS=${VOICE_LIVE_INSTRUCTIONS}
-    volumes:
-      # Optional: Mount code for live editing without rebuilding
-      # - ./src:/src
-      pass:
-
   # Service 2: The Database (MySQL)
   db:
     image: mysql:8.0
