@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 
-# Script to deploy the FastAPI app to Azure App Service using a container from ACR
+# Script to deploy the Flask app to Azure App Service using a container from ACR
 # and provision AI Foundry with gtp-realtime model using AZD.
-# NOW INCLUDES: Azure SQL Database provisioning
 
 # Only change the rg (resource group) and location variables below if needed.
 
-rg="rg-voicelive_1" # Replace with your resource group
+rg="real-time-app" # Replace with your resource group
 location="eastus2" # Or a location near you
 
 
@@ -20,7 +19,7 @@ location="eastus2" # Or a location near you
 # ============================================================================
 clear
 echo "Select deployment mode:"
-echo "  1) Full deployment (AI Foundry + SQL + Container + App Service) - ~20 minutes"
+echo "  1) Full deployment (AI Foundry + Container + App Service) - ~15 minutes"
 echo "  2) Container update only (requires full deployment first) - ~5 minutes"
 echo ""
 read -p "Enter choice (1 or 2): " deploy_mode
@@ -33,39 +32,20 @@ fi
 # ============================================================================
 # Service Name Generation (shared by both modes)
 # ============================================================================
-# Use the current console username plus a short 4-char deterministic hash to set service names.
-user_name="$(whoami 2>/dev/null || echo user)"
-
-# Sanitize username: lowercase and remove non-alphanumeric characters
-full_safe_user=$(printf "%s" "$user_name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
-if [ -z "$full_safe_user" ]; then
-    full_safe_user="user"
+# Generate consistent unique hash from Azure user object ID (guaranteed unique per user)
+user_object_id=$(az ad signed-in-user show --query "id" -o tsv 2>/dev/null)
+if [ -z "$user_object_id" ]; then
+    echo "ERROR: Not authenticated with Azure. Please run: az login"
+    exit 1
 fi
+user_hash=$(echo -n "$user_object_id" | sha1sum | cut -c1-8)
 
-# Truncate for human-readable resource prefixes (8 chars)
-safe_user=${full_safe_user:0:8}
+# Build ACR name: 'acr' prefix + 8-char hash (no hyphens, all lowercase, starts with letter)
+acr_name="acr${user_hash}"
 
-# 4-char hash from the full sanitized username (preserves uniqueness even if truncated)
-short_hash=$(printf "%s" "$full_safe_user" | sha1sum | awk '{print $1}' | cut -c1-4)
-
-# Build ACR name by concatenating truncated username + hash + 'acr' (no hyphens)
-acr_name="${safe_user}${short_hash}acr"
-
-# Ensure ACR name starts with a letter; prepend 'a' if it doesn't
-if ! [[ $acr_name =~ ^[a-z] ]]; then
-    acr_name="a${acr_name}"
-fi
-
-# Ensure minimum length 5 (ACR requires 5-50 chars). Pad with 'a' if too short.
-while [ ${#acr_name} -lt 5 ]; do
-    acr_name="${acr_name}a"
-done
-
-# App Service plan, webapp, and SQL (hyphens allowed)
-appsvc_plan="${safe_user}-appplan-${short_hash}"
-webapp_name="${safe_user}-webapp-${short_hash}"
-sql_server_name="${safe_user}-sql-${short_hash}"
-sql_db_name="voice_db"
+# App Service plan and webapp (hyphens allowed)
+appsvc_plan="appplan-${user_hash}"
+webapp_name="webapp-${user_hash}"
 image="rt-voice"
 tag="v1"
 azd_env_name="gpt-realtime" # Forced as unique at each run
@@ -150,7 +130,7 @@ VOICE_LIVE_VERBOSE="" #Suppresses excessive logging to the terminal if running l
 EOF
 
 clear
-echo "Starting FULL deployment with AZD provisioning + SQL + App Service..."
+echo "Starting FULL deployment with AZD provisioning + App Service, takes about 15 minutes..."
 
 # Step 1: Provision AI Foundry with GPT Realtime model using AZD
 echo
@@ -165,20 +145,40 @@ rm -rf .azure 2>/dev/null || true
 timeout 5 azd env new $azd_env_name --confirm >/dev/null 2>&1 || azd env new $azd_env_name >/dev/null 2>&1
 azd env set AZURE_LOCATION $location >/dev/null
 azd env set AZURE_RESOURCE_GROUP $rg >/dev/null
+subscription_id=$(az account show --query id -o tsv)
+azd env set AZURE_SUBSCRIPTION_ID "$subscription_id" >/dev/null
 echo "  - AZD environment '$azd_env_name' created (fresh state)"
 
 echo "  - Provisioning AI resources (forcing new deployment)..."
-# Verify azd authentication (inherits from Azure CLI in Cloud Shell)
-if ! azd auth login --check-status >/dev/null 2>&1; then
-    echo "  - Authenticating azd with Azure..."
-    azd auth login 2>/dev/null || true
+echo "  - Authenticating azd with Azure..."
+# Try ambient auth (Cloud Shell) with a 10s timeout to avoid hanging.
+# If it doesn't complete quickly, fall back to interactive device code.
+if ! timeout 5 azd auth login >/dev/null 2>&1; then
+    azd auth login --use-device-code
 fi
 
 # Force a completely fresh deployment by combining multiple techniques
 azd config set alpha.infrastructure.deployment.name "azd-gpt-realtime-$(date +%s)"
 # Clear any cached deployment state and force deployment
 azd env refresh --no-prompt 2>/dev/null || true
-azd provision
+
+# Provision with retry logic to handle non-terminal resource state conflicts
+provision_retries=3
+provision_attempt=0
+while [ $provision_attempt -lt $provision_retries ]; do
+    provision_attempt=$((provision_attempt + 1))
+    echo "  - Running azd provision (attempt $provision_attempt of $provision_retries)..."
+    if azd provision; then
+        break
+    fi
+    if [ $provision_attempt -lt $provision_retries ]; then
+        echo "  - Provision failed (possible non-terminal resource conflict). Waiting 60 seconds before retry..."
+        sleep 60
+    else
+        echo "ERROR: azd provision failed after $provision_retries attempts."
+        exit 1
+    fi
+done
 
 echo "  - Retrieving AI Foundry endpoint, API key, and model name..."
 endpoint=$(azd env get-values --output json | jq -r '.AZURE_OPENAI_ENDPOINT')
@@ -206,36 +206,9 @@ fi
 
 echo "  - AI Foundry provisioning complete!"
 
-# Step 2: Create SQL Database
+# Step 2: Continue with App Service deployment
 echo
-echo "Step 2: Creating Azure SQL Database..."
-
-# Generate a complex password (required by Azure SQL)
-# Uses openssl to generate bytes, base64 encodes them, keeps alphanumeric, and adds required complexity characters
-sql_admin_user="azureuser"
-sql_admin_pass="$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)A1!"
-
-echo "  - Creating SQL Server '${sql_server_name}'..."
-az sql server create -n $sql_server_name -g $rg -l $location \
-    --admin-user $sql_admin_user --admin-password $sql_admin_pass >/dev/null
-
-echo "  - Creating SQL Database '${sql_db_name}'..."
-az sql db create --resource-group $rg --server $sql_server_name \
-    --name $sql_db_name --service-objective Basic >/dev/null
-
-echo "  - Configuring Firewall to allow Azure Services (App Service)..."
-az sql server firewall-rule create --resource-group $rg --server $sql_server_name \
-    --name AllowAzureServices --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 >/dev/null
-
-# Construct the SQLAlchemy connection string for Azure SQL (using ODBC Driver 18)
-# We do NOT put this in .env to avoid saving credentials to disk
-azure_sql_connection_string="mssql+pyodbc://${sql_admin_user}:${sql_admin_pass}@${sql_server_name}.database.windows.net/${sql_db_name}?driver=ODBC+Driver+18+for+SQL+Server"
-
-echo "  - SQL Database provisioning complete!"
-
-# Step 3: Continue with App Service deployment
-echo
-echo "Step 3: Create ACR and App Service resources..."
+echo "Step 2: Create ACR and App Service resources..."
 
 # Create ACR and build image from Dockerfile
 echo "  - Creating Azure Container Registry resource..."
@@ -261,7 +234,7 @@ while [ $retry_count -lt $max_retries ]; do
     else
         echo "  - Image not found in ACR, retrying build..."
         retry_count=$((retry_count + 1))
-        if [ "${retry_count}" -lt "${max_retries}" ]; then
+    if [ "${retry_count}" -lt "${max_retries}" ]; then
             echo "  - Waiting 5 seconds before retry..."
             sleep 5
         fi
@@ -279,7 +252,7 @@ fi
 echo "  - Container image build complete!"
 
 echo
-echo "Step 4: Configuring Azure App Service with updated credentials..."
+echo "Step 3: Configuring Azure App Service with updated credentials..."
 
 echo "  - Gathering environment variables from .env file for App Service deployment.."
 # Parse the .env file exists in the repo root, and bring values into the  script environment
@@ -307,14 +280,13 @@ if [ -f .env ]; then
     done < .env
 fi
 
-# Build env_vars using values from .env PLUS the new SQL Connection String
+# Build env_vars using values from .env - one file to update
 env_vars=(
     AZURE_VOICE_LIVE_ENDPOINT="${AZURE_VOICE_LIVE_ENDPOINT}"
     AZURE_VOICE_LIVE_API_KEY="${AZURE_VOICE_LIVE_API_KEY}"
     VOICE_LIVE_MODEL="${VOICE_LIVE_MODEL}"
     VOICE_LIVE_VOICE="${VOICE_LIVE_VOICE}"
     VOICE_LIVE_INSTRUCTIONS="${VOICE_LIVE_INSTRUCTIONS}"
-    DATABASE_URL="${azure_sql_connection_string}"
 )
 
 echo "  - Retrieving ACR credentials so App Service can access the container image..."
@@ -369,11 +341,8 @@ echo
 echo "Deployment complete!"
 echo
 echo " - AI Foundry with GPT Realtime model: PROVISIONED"
-echo " - Azure SQL Database: PROVISIONED"
 echo " - Flask app deployed to App Service: READY"
 echo " - Your app is available at: https://${webapp_name}.azurewebsites.net"
 echo
 echo "Note: App may take a few minutes to start after loading the web page."
-echo
-echo "To update the container with new code changes, run this script again and select option 2 (Container update only)."
 echo

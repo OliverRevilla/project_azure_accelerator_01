@@ -15,7 +15,6 @@ charset-normalizer==3.4.3
 click==8.1.8
 colorama==0.4.6
 cryptography==44.0.3
-flask==3.1.2
 frozenlist==1.7.0
 idna==3.10
 isodate==0.7.2
@@ -39,7 +38,6 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.20.0
 python-multipart
 sse-starlette
-jinja2
 sqlalchemy==2.0.25
 pymysql==1.1.0  # Driver for MySQL
 pyodbc==5.0.1
