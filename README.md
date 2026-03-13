@@ -68,3 +68,5 @@ The solution is built on Azure Platform-as-a-Service (PaaS) components to ensure
    ```
 
 3. **Access:** Open the output URL in Chrome, Edge, or Safari.
+
+4. **Testing** cd ./src/ uvicorn main:app --reload
