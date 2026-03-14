@@ -125,7 +125,7 @@ AZURE_VOICE_LIVE_ENDPOINT=""
 AZURE_VOICE_LIVE_API_KEY=""
 VOICE_LIVE_MODEL=""
 VOICE_LIVE_VOICE="en-US-JennyNeural"
-VOICE_LIVE_INSTRUCTIONS="You are a helpful AI assistant with a focus on world history. Respond naturally and conversationally. Keep your responses concise but engaging."
+VOICE_LIVE_INSTRUCTIONS="You are a helpful AI assistant with a focus on technology and science. Respond naturally and conversationally. Keep your responses concise but engaging."
 VOICE_LIVE_VERBOSE="" #Suppresses excessive logging to the terminal if running locally
 EOF
 
