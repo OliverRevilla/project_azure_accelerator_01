@@ -141,7 +141,7 @@ Go to your repository → **Settings → Secrets and variables → Actions → N
 | `AZURE_SUBSCRIPTION_ID` | `$SUBSCRIPTION_ID` from Step 1 |
 | `ACR_NAME` | Azure Portal → Container registries, or output of `azdeploy.sh` |
 | `WEBAPP_NAME` | Azure Portal → App Services, or output of `azdeploy.sh` |
-| `RESOURCE_GROUP` | `rg-voicelive` (default) |
+| `RESOURCE_GROUP` | `real-time-app` (default) |
 
 > **Tip — finding ACR_NAME and WEBAPP_NAME:** If you no longer have the deployment output, run:
 > ```bash

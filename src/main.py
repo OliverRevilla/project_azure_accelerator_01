@@ -147,14 +147,16 @@ async def start_session(state: SessionState = Depends(get_session_state)):
 async def stop_session(state: SessionState = Depends(get_session_state)):
     if state.assistant_instance:
         assistant = cast(BasicVoiceAssistant, state.assistant_instance)
+        await assistant.interrupt()  # Cut audio playback immediately
         await assistant.stop()
-    
-    if state.assistant_task:
+
+    if state.assistant_task and not state.assistant_task.done():
+        state.assistant_task.cancel()
         try:
-            await asyncio.wait_for(state.assistant_task, timeout=2.0)
+            await asyncio.wait_for(state.assistant_task, timeout=1.0)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
-            
+
     state.assistant_task = None
     state.assistant_instance = None
     state.update("stopped", "Session stopped manually.")
