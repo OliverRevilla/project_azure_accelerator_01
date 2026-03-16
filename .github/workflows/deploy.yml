@@ -27,7 +27,28 @@ jobs:
         uses: actions/checkout@v4
 
       # -----------------------------------------------------------------------
-      # 2. Authenticate to Azure using OIDC federated credentials
+      # 2. Verify all required secrets are present before attempting login.
+      #    If any are missing, fail fast with a clear message.
+      # -----------------------------------------------------------------------
+      - name: Verify required secrets
+        run: |
+          missing=""
+          [ -z "${{ secrets.AZURE_CLIENT_ID }}"       ] && missing="$missing\n  - AZURE_CLIENT_ID"
+          [ -z "${{ secrets.AZURE_TENANT_ID }}"       ] && missing="$missing\n  - AZURE_TENANT_ID"
+          [ -z "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ] && missing="$missing\n  - AZURE_SUBSCRIPTION_ID"
+          [ -z "${{ secrets.ACR_NAME }}"              ] && missing="$missing\n  - ACR_NAME"
+          [ -z "${{ secrets.WEBAPP_NAME }}"           ] && missing="$missing\n  - WEBAPP_NAME"
+          [ -z "${{ secrets.RESOURCE_GROUP }}"        ] && missing="$missing\n  - RESOURCE_GROUP"
+          if [ -n "$missing" ]; then
+            echo -e "ERROR: The following GitHub Secrets are missing or empty:$missing"
+            echo ""
+            echo "Go to: Settings → Secrets and variables → Actions → New repository secret"
+            exit 1
+          fi
+          echo "All required secrets are present."
+
+      # -----------------------------------------------------------------------
+      # 3. Authenticate to Azure using OIDC federated credentials
       #    Requires: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
       #    set as GitHub Secrets (no passwords stored).
       # -----------------------------------------------------------------------
@@ -39,7 +60,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # -----------------------------------------------------------------------
-      # 3. Build the Docker image remotely inside ACR (no local Docker needed).
+      # 4. Build the Docker image remotely inside ACR (no local Docker needed).
       #    Two tags are pushed:
       #      - git SHA  → unique, immutable reference for this exact commit
       #      - latest   → convenience alias always pointing to the newest build
@@ -54,7 +75,7 @@ jobs:
             .
 
       # -----------------------------------------------------------------------
-      # 4. Point the App Service at the new image tag (the SHA-tagged one for
+      # 5. Point the App Service at the new image tag (the SHA-tagged one for
       #    traceability) and restart so the new container is pulled immediately.
       # -----------------------------------------------------------------------
       - name: Update App Service container image
@@ -71,7 +92,7 @@ jobs:
             --resource-group ${{ secrets.RESOURCE_GROUP }}
 
       # -----------------------------------------------------------------------
-      # 5. Print the live URL for quick reference in the Actions run summary.
+      # 6. Print the live URL for quick reference in the Actions run summary.
       # -----------------------------------------------------------------------
       - name: Print deployment URL
         run: |
