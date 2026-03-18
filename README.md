@@ -261,3 +261,13 @@ WEBAPP_ID=$(az webapp show -n <WEBAPP_NAME> -g resourcegroup --query id -o tsv)
 az role assignment delete --assignee $SP_OBJECT_ID --role "Website Contributor" --scope $WEBAPP_ID 2>/dev/null || true
 az role assignment create --assignee $SP_OBJECT_ID --role Contributor --scope $WEBAPP_ID
 ```
+
+---
+
+## Roadmap & New Features
+
+We are planning to implement several exciting new features to turn this project into a more robust and complete application:
+
+*   **Dynamic Personas:** Dynamic configuration in the UI before a session starts to select different voices (e.g., alloy, echo, shimmer, etc.) and system prompts. This allows the assistant to adopt different personas instantly (e.g., travel guide, grumpy pirate, formal assistant).
+*   **Chat History Management:** A new dashboard in the UI allowing users to view past text transcripts from the database. Users will be able to load older sessions and review the context of previous conversations.
+*   **Export Transcription:** An option in the UI that lets users download their session transcripts natively to `.txt` or `.md` files for record-keeping and offline review.
