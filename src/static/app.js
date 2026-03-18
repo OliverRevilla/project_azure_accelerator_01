@@ -167,7 +167,7 @@ function handleControlEvent(data) {
 function openAudioWebSocket(){
   try{
     const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    const wsUrl = `${protocol}${location.hostname}:8765/ws-audio?session_id=${encodeURIComponent(window.SESSION_ID || '')}`;
+    const wsUrl = `${protocol}${location.host}/ws-audio?session_id=${encodeURIComponent(window.SESSION_ID || '')}`;
     
     wsAudio = new WebSocket(wsUrl);
     wsAudio.binaryType = 'arraybuffer';
