@@ -9,7 +9,7 @@ from azure.ai.voicelive.aio import connect
 from azure.ai.voicelive.models import (
     RequestSession,
     ServerVad,
-    AzureStandardVoice,
+    OpenAIVoice,
     Modality,
     InputAudioFormat,
     OutputAudioFormat,
@@ -28,7 +28,7 @@ class BasicVoiceAssistant:
         self.instructions = instructions
         self.max_tokens = max_tokens
         self.connection = None
-        self._response_cancelled = False,
+        self._response_cancelled = False
         self._stopping = False
 
     async def run(self):
@@ -49,7 +49,7 @@ class BasicVoiceAssistant:
                 self._response_cancelled = False
 
 
-                voice_cfg = AzureStandardVoice(name=self.voice)
+                voice_cfg = OpenAIVoice(name=self.voice)
 
                 req_session = RequestSession(
                     modalities=[Modality.TEXT, Modality.AUDIO],
@@ -61,7 +61,8 @@ class BasicVoiceAssistant:
                     max_response_output_tokens=self.max_tokens
                 )
                 session_update_event = ClientEventSessionUpdate(session=req_session)
-                logger.info(f"Sending session.update event")
+                import json as _json
+                logger.info(f"Sending session.update payload: {_json.dumps(session_update_event.as_dict())}")
                 await self.connection.send(session_update_event)
 
                 self.state_manager.update("ready", "Session Ready. Speak now.")
@@ -86,7 +87,7 @@ class BasicVoiceAssistant:
         if instructions: self.instructions = instructions
         if max_tokens: self.max_tokens = max_tokens
         
-        voice_cfg = AzureStandardVoice(name=self.voice)
+        voice_cfg = OpenAIVoice(name=self.voice)
         
         try:
             req_session = RequestSession(
