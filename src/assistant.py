@@ -61,11 +61,8 @@ class BasicVoiceAssistant:
                     max_response_output_tokens=self.max_tokens
                 )
                 session_update_event = ClientEventSessionUpdate(session=req_session)
-                event_dict = session_update_event.as_dict()
-                if event_dict.get("type") != "session.update":
-                    raise ValueError("Session update event type mismatch")
-                logger.info(f"Sending session.update event: {event_dict}")
-                await self.connection.send(event_dict)
+                logger.info(f"Sending session.update event")
+                await self.connection.send(session_update_event)
 
                 self.state_manager.update("ready", "Session Ready. Speak now.")
 
@@ -102,11 +99,8 @@ class BasicVoiceAssistant:
                 max_response_output_tokens=self.max_tokens
             )
             session_update_event = ClientEventSessionUpdate(session=req_session)
-            event_dict = session_update_event.as_dict()
-            if event_dict.get("type") != "session.update":
-                raise ValueError("Session update event type mismatch")
-            logger.info(f"Sending session.update event (dynamic): {event_dict}")
-            await self.connection.send(event_dict)
+            logger.info(f"Sending session.update event (dynamic)")
+            await self.connection.send(session_update_event)
             self.state_manager.broadcast_event({"type": "log", "msg": f"Session dynamically updated: Voice={self.voice}", "level": "debug"})
         except Exception as e:
             self.state_manager.broadcast_event({"type": "log", "msg": f"Failed to update session: {e}", "level": "error"})
