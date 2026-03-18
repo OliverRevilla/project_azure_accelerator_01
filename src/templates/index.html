@@ -1,71 +1,150 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <title>Real Time Voice</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='50%' x='50%' dominant-baseline='middle' text-anchor='middle' font-size='42'>🎤</text></svg>">
-  <link rel="stylesheet" href="./static/style.css">
-  
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='50%' x='50%' dominant-baseline='middle' text-anchor='middle' font-size='42'>🎤</text></svg>">
+  <link rel="stylesheet" href="./static/style.css?v={{ session_id }}">
+
   <script>
     // Critical: Inject ID for JS fallback
     window.SESSION_ID = "{{ session_id }}";
     console.log("Session ID initialized:", window.SESSION_ID);
   </script>
 </head>
+
 <body>
   <div class="container">
-    <h1>Real-Time Voice Demo</h1>
-  <p>This page streams <strong>your microphone audio</strong> to the server and plays the assistant's synthesized audio. Grant microphone permission when prompted. You can begin speaking when <strong>Status:</strong> ready.</p>
-    <div style="margin:1rem 0;display:flex;gap:.75rem;flex-wrap:wrap; align-items: flex-end;">
-      <div>
-        <label for="personaVoice" style="display:block; font-size: 0.85rem; margin-bottom: 0.25rem;">Voice Persona</label>
-        <select id="personaVoice" style="padding: 0.5rem; border-radius: 4px; border: 1px solid var(--c-border); background: var(--c-bg); color: var(--c-fg);">
-            <option value="alloy">Alloy (Neutral)</option>
-            <option value="echo">Echo (Male)</option>
-            <option value="shimmer">Shimmer (Female)</option>
-        </select>
+    <div style="text-align: center; margin-bottom: 1rem; flex-shrink: 0;">
+      <h1>Voice Assistant</h1>
+      <p
+        style="color: var(--c-muted); letter-spacing: 2px; text-transform: uppercase; font-size: 0.75rem; margin-top: 0;">
+        Terminal Initialized. Root Access Granted.</p>
+    </div>
+
+    <!-- MAIN LAYOUT -->
+    <div class="layout-wrapper">
+
+      <!-- LEFT PANEL: Core Assistant -->
+      <div class="left-panel">
+        <!-- DYNAMIC VISUALIZER -->
+        <div
+          style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 1rem; flex-shrink: 0;">
+          <p
+            style="font-size: 0.65rem; color: var(--c-muted); text-transform: uppercase; letter-spacing: 2px; margin: 0 0 0.5rem 0;">
+            Real-Time Audio Visualizer</p>
+          <canvas id="visualizer" width="500" height="80"
+            style="border-radius: 4px; background: transparent; border: 1px solid var(--c-border); width: 100%; max-width: 600px; box-shadow: inset 0 0 10px rgba(51,255,153,0.05); object-fit: cover;"></canvas>
+        </div>
+
+        <div style="margin-bottom: 1rem; display:flex; gap:.75rem; flex-shrink: 0;">
+          <div style="flex: 1;">
+            <label for="personaVoice"
+              style="display:block; font-size: 0.65rem; text-transform: uppercase; margin-bottom: 0.25rem; color: var(--c-muted); letter-spacing: 1px;">Voice
+              Protocol</label>
+            <select id="personaVoice" style="width: 100%; padding: 0.5rem; border-radius: 2px;">
+              <option value="alloy">Alloy (Neutral)</option>
+              <option value="echo">Echo (Male)</option>
+              <option value="shimmer">Shimmer (Female)</option>
+            </select>
+          </div>
+          <div style="flex: 2;">
+            <label for="personaInstructions"
+              style="display:block; font-size: 0.65rem; text-transform: uppercase; margin-bottom: 0.25rem; color: var(--c-muted); letter-spacing: 1px;">System
+              Directive</label>
+            <input type="text" id="personaInstructions" placeholder="Enter override instructions..."
+              style="width: 100%; padding: 0.5rem; border-radius: 2px; box-sizing: border-box;">
+          </div>
+          <div style="flex: 0 0 100px;">
+            <label for="maxTokens"
+              style="display:block; font-size: 0.65rem; text-transform: uppercase; margin-bottom: 0.25rem; color: var(--c-muted); letter-spacing: 1px;">Tokens</label>
+            <input type="number" id="maxTokens" min="100" max="1000" value="500"
+              style="width: 100%; padding: 0.5rem; border-radius: 2px; box-sizing: border-box; text-align: center;">
+          </div>
+        </div>
+
+        <div style="margin-bottom: 1rem; display:flex; gap:.75rem; flex-wrap: wrap; flex-shrink: 0;">
+          <button id="startBtn">Start Session</button>
+          <button id="stopBtn" disabled
+            style="border-color: var(--c-status-error); color: var(--c-status-error); background: transparent;">Stop</button>
+          <button id="exportBtn"
+            style="border-color: var(--c-muted); color: var(--c-muted); background: transparent;">Export</button>
+          <a href="/history"
+            style="padding:.7rem 1.2rem; text-decoration: none; color: var(--c-muted); border: 1px solid var(--c-muted); border-radius: 2px; display: flex; align-items: center; justify-content: center; font-weight: bold; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 2px; transition: all 0.2s ease;">History</a>
+        </div>
+
+        <div id="statusBox" style="padding:.75rem 1rem; border-radius:2px; flex-shrink: 0;">
+          <strong
+            style="font-size: 0.75rem; letter-spacing: 1px; text-transform: uppercase; color: var(--c-muted);">Status
+            Code: </strong> <span id="statusText"
+            style="text-transform: uppercase; font-weight: bold; color: var(--c-accent); font-size: 0.85rem; letter-spacing: 1px;">Idle</span><br />
+          <small id="statusMsg" style="color: var(--c-muted); font-size: 0.7rem; font-family: monospace;">Awaiting
+            command execution.</small>
+        </div>
+
+        <!-- Chat History Container -->
+        <div id="chatContainer" class="chat-container">
+          <div class="chat-placeholder">Terminal ready...</div>
+        </div>
       </div>
-      <div style="flex-grow: 1;">
-        <label for="personaInstructions" style="display:block; font-size: 0.85rem; margin-bottom: 0.25rem;">System Instructions</label>
-        <input type="text" id="personaInstructions" placeholder="You are a helpful assistant..." style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid var(--c-border); background: var(--c-bg); color: var(--c-fg);">
+
+      <!-- RIGHT PANEL: ADLS2 Uploader & Logs -->
+      <div class="right-panel">
+        <div class="adls-container" style="flex-shrink:0;">
+          <h3
+            style="color: var(--c-button-bg); text-transform: uppercase; letter-spacing: 2px; margin-top: 0; display: flex; align-items: center; gap: 10px; font-size: 1rem; text-shadow: 0 0 10px rgba(102, 255, 178, 0.4);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Data Lake Uplink
+          </h3>
+          <p style="font-size: 0.75rem; color: var(--c-muted); line-height: 1.4; margin-bottom: 1rem;">Transmit secure
+            files to Azure DL Gen2.</p>
+
+          <div id="dropZone"
+            style="border: 1px dashed var(--c-muted); border-radius: 4px; padding: 2.5rem 1rem; text-align: center; margin-bottom: 1.5rem; cursor: pointer; transition: all 0.2s; background: rgba(0,0,0,0.4);">
+            <div style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.5; color: var(--c-button-bg);">⇪</div>
+            <p
+              style="margin: 0; font-size: 0.85rem; color: var(--c-accent); text-transform: uppercase; letter-spacing: 2px; font-weight: bold;">
+              Drop Files</p>
+            <p style="margin: 0.25rem 0 0 0; font-size: 0.65rem; color: var(--c-muted); text-transform: uppercase;">or
+              click to browse</p>
+            <input type="file" id="adlsFileInput" multiple style="display: none;">
+          </div>
+
+          <button id="uploadAdlsBtn" style="width: 100%;">Transmit Data</button>
+        </div>
+
+        <details style="margin-top:2rem; padding-top: 1rem; border-top: 1px solid var(--c-border); flex-shrink: 0;">
+          <summary style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; cursor: pointer;">System
+            Variables</summary>
+          <ul
+            style="font-size: 0.65rem; word-break: break-all; color: var(--c-muted); padding-left: 1rem; font-family: monospace;">
+            <li><code>MOD: {{ env.VOICE_LIVE_MODEL }}</code></li>
+            <li><code>END: {{ env.AZURE_VOICE_LIVE_ENDPOINT }}</code></li>
+          </ul>
+        </details>
+
+        <!-- Logs moved to the right panel -->
+        <h3
+          style="margin-top:2rem; margin-bottom: 0; color: var(--c-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 2px; flex-shrink: 0;">
+          Syslogs</h3>
+        <div id="log" aria-live="polite"></div>
       </div>
-    </div>
-    <div style="margin:1rem 0;display:flex;gap:.75rem;flex-wrap:wrap;">
-      <button id="startBtn" style="padding:.6rem 1.2rem;font-size:1rem;">Start Session</button>
-      <button id="stopBtn" style="padding:.6rem 1.2rem;font-size:1rem;" disabled>Stop Session</button>
-      <button id="exportBtn" style="padding:.6rem 1.2rem;font-size:1rem; background: var(--c-status-ready); color: var(--c-accent); border: 1px solid var(--c-accent);">Export Transcript</button>
-      <a href="/history" style="padding:.6rem 1.2rem;font-size:1rem; text-decoration: none; color: var(--c-accent); border: 1px solid var(--c-accent); border-radius: 6px; display: inline-block;">Past Sessions</a>
-    </div>
-    <div id="statusBox" style="padding:.75rem 1rem;border:1px solid #ccc;border-radius:6px;background:#f9f9f9;min-height:3.25rem;">
-      <strong>Status:</strong> <span id="statusText">Idle</span><br/>
-      <small id="statusMsg">Click Start to begin a voice session.</small>
-    </div>
+    </div> <!-- END MAIN LAYOUT -->
 
-    <!-- NEW: Chat History Container -->
-    <div id="chatContainer" class="chat-container">
-        <!-- Messages will be injected here via JS -->
-        <div class="chat-placeholder">Conversation history will appear here...</div>
-    </div>
-
-    <details style="margin-top:1rem;">
-      <summary>Environment variables required (server)</summary>
-      <ul>
-        <li><code>VOICE_LIVE_MODEL: {{ env.VOICE_LIVE_MODEL }}</code></li>
-        <li><code>VOICE_LIVE_VOICE: {{ env.VOICE_LIVE_VOICE }}</code></li>
-        <li><code>AZURE_VOICE_LIVE_ENDPOINT: {{ env.AZURE_VOICE_LIVE_ENDPOINT }}</code></li>
-        <li><code>VOICE_LIVE_INSTRUCTIONS: {{ env.VOICE_LIVE_INSTRUCTIONS }}</code></li>
-      </ul>
-    </details>
-    <h3 style="margin-top:1.75rem;">Logs</h3>
-    <div id="log" aria-live="polite"></div>
-    <p><small>Only recent ~250 lines kept in memory.</small></p>
-
-    <!-- Cache Buster added to src to force reload of new app.js -->
+    <!-- Cache Buster -->
     <script src="./static/app.js?v={{ session_id }}"></script>
-    <footer>
-      <p>Voice live example front-end (browser PCM16 streaming & SSE playback).</p>
+    <footer style="flex-shrink: 0;">
+      <p>OS Console // PCM16 STREAM // RESTRICTED ACCESS</p>
     </footer>
   </div>
 </body>
+
 </html>

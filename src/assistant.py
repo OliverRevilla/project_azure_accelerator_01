@@ -13,18 +13,20 @@ from azure.ai.voicelive.models import (
     Modality,
     InputAudioFormat,
     OutputAudioFormat,
-    ServerEventType
+    ServerEventType,
+    ClientEventSessionUpdate
 )
 
 class BasicVoiceAssistant:
     # Async wrapper for Azure Voice Live
-    def __init__(self, state_manager,endpoint:str, key:str, model:str, voice:str, instructions: str):
+    def __init__(self, state_manager,endpoint:str, key:str, model:str, voice:str, instructions: str, max_tokens: int = 500):
         self.state_manager = state_manager
         self.endpoint = endpoint
         self.key = key
         self.voice = voice
         self.model = model
         self.instructions = instructions
+        self.max_tokens = max_tokens
         self.connection = None
         self._response_cancelled = False,
         self._stopping = False
@@ -47,16 +49,23 @@ class BasicVoiceAssistant:
                 self._response_cancelled = False
 
 
-                voice_cfg = AzureStandardVoice(name=self.voice) if "-" in self.voice else self.voice
+                voice_cfg = AzureStandardVoice(name=self.voice)
 
-                await conn.session.update(session=RequestSession(
+                req_session = RequestSession(
                     modalities=[Modality.TEXT, Modality.AUDIO],
                     instructions=self.instructions,
                     voice=voice_cfg,
                     input_audio_format=InputAudioFormat.PCM16,
                     output_audio_format=OutputAudioFormat.PCM16,
-                    turn_detection=ServerVad(threshold=0.5, prefix_padding_ms=300, silence_duration_ms=500)
-                ))
+                    turn_detection=ServerVad(threshold=0.5, prefix_padding_ms=300, silence_duration_ms=500),
+                    max_response_output_tokens=self.max_tokens
+                )
+                session_update_event = ClientEventSessionUpdate(session=req_session)
+                event_dict = session_update_event.as_dict()
+                if event_dict.get("type") != "session.update":
+                    raise ValueError("Session update event type mismatch")
+                logger.info(f"Sending session.update event: {event_dict}")
+                await self.connection.send(event_dict)
 
                 self.state_manager.update("ready", "Session Ready. Speak now.")
 
@@ -71,6 +80,36 @@ class BasicVoiceAssistant:
         finally:
             self.connection = None
             self.state_manager.update("stopped", "Session Ended")
+            
+    async def update_session_config(self, voice: Optional[str] = None, instructions: Optional[str] = None, max_tokens: Optional[int] = None):
+        if not self.connection:
+            return
+        
+        if voice: self.voice = voice
+        if instructions: self.instructions = instructions
+        if max_tokens: self.max_tokens = max_tokens
+        
+        voice_cfg = AzureStandardVoice(name=self.voice)
+        
+        try:
+            req_session = RequestSession(
+                modalities=[Modality.TEXT, Modality.AUDIO],
+                instructions=self.instructions,
+                voice=voice_cfg,
+                input_audio_format=InputAudioFormat.PCM16,
+                output_audio_format=OutputAudioFormat.PCM16,
+                turn_detection=ServerVad(threshold=0.5, prefix_padding_ms=300, silence_duration_ms=500),
+                max_response_output_tokens=self.max_tokens
+            )
+            session_update_event = ClientEventSessionUpdate(session=req_session)
+            event_dict = session_update_event.as_dict()
+            if event_dict.get("type") != "session.update":
+                raise ValueError("Session update event type mismatch")
+            logger.info(f"Sending session.update event (dynamic): {event_dict}")
+            await self.connection.send(event_dict)
+            self.state_manager.broadcast_event({"type": "log", "msg": f"Session dynamically updated: Voice={self.voice}", "level": "debug"})
+        except Exception as e:
+            self.state_manager.broadcast_event({"type": "log", "msg": f"Failed to update session: {e}", "level": "error"})
         
     async def _handle_event(self, event, conn, ServerEventType):
         # Route events to specfic handlers

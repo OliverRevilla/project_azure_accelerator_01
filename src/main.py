@@ -12,11 +12,12 @@ except ImportError:
     pass
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Response, Cookie, Depends
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import func
 
 from config import logger, validate_env, get_env_display
@@ -30,6 +31,29 @@ from database import init_db, SessionLocal, ChatMessageModel
 init_db()
 
 app = FastAPI(title="Voice Assistant Multi-User")
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Log the incoming request for easier debugging when a 422 occurs
+    body = None
+    try:
+        body = await request.body()
+    except Exception:
+        body = b"<unreadable>"
+    logger.error(
+        "Request validation failed: %s | Path: %s | Body: %s",
+        exc.errors(),
+        request.url.path,
+        body,
+    )
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": exc.errors(),
+            "body": body.decode(errors='replace') if isinstance(body, (bytes, bytearray)) else str(body),
+        },
+    )
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
@@ -123,11 +147,16 @@ async def sse_endpoint(request: Request, state: SessionState = Depends(get_sessi
     return EventSourceResponse(event_generator())
 
 class StartSessionRequest(BaseModel):
-    voice: Optional[str] = None
-    instructions: Optional[str] = None
+    voice: Optional[str] = "alloy"
+    instructions: Optional[str] = ""
+    max_tokens: Optional[int] = Field(500, alias="maxTokens")
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Response, Cookie, Depends, Body
 
 @app.post("/start-session")
-async def start_session(req: StartSessionRequest, state: SessionState = Depends(get_session_state)):
+async def start_session(req: Optional[StartSessionRequest] = Body(None), state: SessionState = Depends(get_session_state)):
     if state.assistant_task and not state.assistant_task.done():
          return JSONResponse({"started": False, "reason": "Already running"})
 
@@ -135,9 +164,10 @@ async def start_session(req: StartSessionRequest, state: SessionState = Depends(
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
 
-    # Allow overriding voice and instructions via the API
-    voice_to_use = req.voice or os.environ.get("VOICE_LIVE_VOICE") or "alloy"
-    instructions_to_use = req.instructions or os.environ.get("VOICE_LIVE_INSTRUCTIONS") or "You are a helpful assistant."
+    # Completely decoupled from .env for Voice and Instructions
+    voice_to_use = req.voice if req and req.voice else "alloy"
+    instructions_to_use = req.instructions if req and req.instructions else "You are a helpful assistant."
+    max_tokens_to_use = req.max_tokens if req and req.max_tokens else 500
 
     state.assistant_instance = BasicVoiceAssistant(
         state_manager=state,
@@ -145,7 +175,8 @@ async def start_session(req: StartSessionRequest, state: SessionState = Depends(
         key=os.environ.get("AZURE_VOICE_LIVE_API_KEY"),
         model=os.environ.get("VOICE_LIVE_MODEL"),
         voice=voice_to_use,
-        instructions=instructions_to_use
+        instructions=instructions_to_use,
+        max_tokens=max_tokens_to_use
     )
     
     state.update("starting", "Starting session...")
@@ -171,6 +202,18 @@ async def stop_session(state: SessionState = Depends(get_session_state)):
     state.assistant_instance = None
     state.update("stopped", "Session stopped manually.")
     return {"stopped": True}
+
+@app.post("/update-session")
+async def update_session(req: Optional[StartSessionRequest] = Body(None), state: SessionState = Depends(get_session_state)):
+    if state.assistant_instance and req:
+        assistant = cast(BasicVoiceAssistant, state.assistant_instance)
+        await assistant.update_session_config(
+            voice=req.voice,
+            instructions=req.instructions,
+            max_tokens=req.max_tokens
+        )
+        return {"updated": True}
+    return JSONResponse({"updated": False, "reason": "No active session or empty payload"}, status_code=400)
 
 @app.post("/interrupt")
 async def interrupt_session(state: SessionState = Depends(get_session_state)):

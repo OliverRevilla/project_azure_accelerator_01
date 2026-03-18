@@ -2,6 +2,8 @@
 // UI ELEMENTS
 // =============================
 const startBtn = document.getElementById('startBtn');
+const canvas = document.getElementById('visualizer');
+const canvasCtx = canvas ? canvas.getContext('2d') : null;
 const stopBtn = document.getElementById('stopBtn');
 const statusBox = document.getElementById('statusBox');
 const statusText = document.getElementById('statusText');
@@ -18,6 +20,9 @@ const CHUNK_DURATION_MS = 150;
 const MAX_LOG_LINES = 250;
 
 let eventSource = null;
+let micAnalyser = null;
+let assistantAnalyser = null;
+let visualizerAnimationId = null;
 let wsAudio = null;
 let stopped = false;
 
@@ -176,6 +181,14 @@ function ensureAudioContext(){
     audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 48000});
     inputSampleRate = audioContext.sampleRate;
     nextPlayTime = audioContext.currentTime;
+    
+    micAnalyser = audioContext.createAnalyser();
+    micAnalyser.fftSize = 256;
+    
+    assistantAnalyser = audioContext.createAnalyser();
+    assistantAnalyser.fftSize = 256;
+    
+    if (canvasCtx) drawVisualizer();
   }
 }
 
@@ -200,6 +213,7 @@ async function startMicCapture(){
   };
   source.connect(processorNode);
   processorNode.connect(audioContext.destination);
+  source.connect(micAnalyser); // Connect mic to visualizer
   capturing = true;
   log('Microphone capture started');
 }
@@ -315,7 +329,8 @@ function playAssistantPcm16(b64){
     audioBuf.copyToChannel(floatBuf, 0, 0);
     const src = audioContext.createBufferSource();
     src.buffer = audioBuf;
-    src.connect(audioContext.destination);
+    src.connect(assistantAnalyser);
+    assistantAnalyser.connect(audioContext.destination);
     assistantSources.push(src);
     src.addEventListener('ended', () => {
       const i = assistantSources.indexOf(src);
@@ -352,12 +367,19 @@ async function startSession(){
   try {
     const url = '/start-session?session_id=' + encodeURIComponent(window.SESSION_ID || '');
     
-    // Add logic to get voice and instructions
+    // Explicitly grab DOM values
     const voiceSelect = document.getElementById('personaVoice');
     const instructionsInput = document.getElementById('personaInstructions');
+    const maxTokensInput = document.getElementById('maxTokens');
+    
+    const v = voiceSelect ? voiceSelect.value : "alloy";
+    const i = instructionsInput ? instructionsInput.value.trim() : "";
+    const m = maxTokensInput ? parseInt(maxTokensInput.value, 10) : 500;
+
     const bodyData = {
-        voice: voiceSelect && voiceSelect.value ? voiceSelect.value : null,
-        instructions: instructionsInput && instructionsInput.value.trim() !== "" ? instructionsInput.value : null
+        voice: v,
+        instructions: i,
+        max_tokens: m
     };
 
     const response = await fetch(url, {
@@ -423,4 +445,135 @@ if (exportBtn) {
 }
 window.addEventListener('beforeunload', closeConnections);
 
+// Dynamic Session Adjustments
+async function sendSessionUpdate() {
+   if(!capturing || stopped) return; // Only process if session is actively running
+   const voiceSelect = document.getElementById('personaVoice');
+   const instructionsInput = document.getElementById('personaInstructions');
+   const maxTokensInput = document.getElementById('maxTokens');
+   
+   const v = voiceSelect ? voiceSelect.value : "alloy";
+   const i = instructionsInput ? instructionsInput.value.trim() : "";
+   const m = maxTokensInput ? parseInt(maxTokensInput.value, 10) : 500;
+
+   const bodyData = {
+       voice: v,
+       instructions: i,
+       max_tokens: m
+   };
+   
+   try {
+       const url = '/update-session?session_id=' + encodeURIComponent(window.SESSION_ID || '');
+       await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json'}, body: JSON.stringify(bodyData) });
+   } catch(e) { log('Failed to push session update: ' + e, 'error'); }
+}
+
+const voiceSelectEl = document.getElementById('personaVoice');
+if(voiceSelectEl) voiceSelectEl.addEventListener('change', sendSessionUpdate);
+
+const instructionsEl = document.getElementById('personaInstructions');
+if(instructionsEl) instructionsEl.addEventListener('change', sendSessionUpdate);
+
+const maxTokensEl = document.getElementById('maxTokens');
+if(maxTokensEl) maxTokensEl.addEventListener('change', sendSessionUpdate);
+
 openEventSource();
+
+// =============================
+// NOVELTY: AUDIO VISUALIZER
+// =============================
+function drawVisualizer() {
+    visualizerAnimationId = requestAnimationFrame(drawVisualizer);
+    if (!canvasCtx || !audioContext) return;
+
+    const WIDTH = canvas.width;
+    const HEIGHT = canvas.height;
+    
+    // Clear canvas
+    canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+
+    let analyser = null;
+    let color = 'rgba(51, 255, 153, 0.2)'; // Idle faint color
+
+    if (capturing && statusText && statusText.textContent === 'Listening...') {
+         analyser = micAnalyser;
+         color = 'rgba(51, 255, 153, 1)'; // Neon Green
+    } else if (assistantSources.length > 0 && !suspendPlayback) {
+         analyser = assistantAnalyser;
+         color = 'rgba(255, 255, 255, 1)'; // Pure White
+    }
+
+    if (!analyser) {
+        // Draw flat idle line
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(0, HEIGHT / 2);
+        canvasCtx.lineTo(WIDTH, HEIGHT / 2);
+        canvasCtx.lineWidth = 1;
+        canvasCtx.strokeStyle = color;
+        canvasCtx.stroke();
+        return;
+    }
+
+    const bufferLength = analyser.frequencyBinCount; // Usually 128
+    const dataArray = new Uint8Array(bufferLength);
+    analyser.getByteFrequencyData(dataArray);
+
+    const barWidth = Math.max((WIDTH / bufferLength) * 1.5, 2);
+    let barHeight;
+    let x = 0;
+
+    for (let i = 0; i < bufferLength; i++) {
+        // getByteFrequencyData returns 0-255. We scale it down to fit our Canvas HEIGHT nicely.
+        barHeight = dataArray[i] * (HEIGHT / 255); 
+        // Force minimum height to 2px so the line never fully breaks
+        if (barHeight < 2) barHeight = 2; 
+
+        canvasCtx.fillStyle = color;
+        // Center the bars vertically 
+        canvasCtx.fillRect(x, (HEIGHT - barHeight) / 2, barWidth - 1, barHeight);
+
+        x += barWidth;
+        if(x > WIDTH) break;
+    }
+}
+
+// =============================
+// ADLS2 UPLOADER UI LOGIC
+// =============================
+const dropZone = document.getElementById('dropZone');
+const adlsFileInput = document.getElementById('adlsFileInput');
+const uploadAdlsBtn = document.getElementById('uploadAdlsBtn');
+
+if (dropZone && adlsFileInput && uploadAdlsBtn) {
+    dropZone.addEventListener('click', () => adlsFileInput.click());
+    
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--c-gold)';
+        dropZone.style.background = 'rgba(6, 4, 0, 0.05)';
+    });
+    
+    dropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--c-muted)';
+        dropZone.style.background = 'rgba(0,0,0,0.2)';
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--c-muted)';
+        dropZone.style.background = 'rgba(0,0,0,0.2)';
+        if(e.dataTransfer.files.length) {
+            adlsFileInput.files = e.dataTransfer.files;
+            uploadAdlsBtn.textContent = `Ready: ${e.dataTransfer.files.length} File(s)`;
+            uploadAdlsBtn.style.background = 'rgba(255, 170, 0, 0.1)';
+        }
+    });
+
+    adlsFileInput.addEventListener('change', () => {
+        if(adlsFileInput.files.length) {
+            uploadAdlsBtn.textContent = `Ready: ${adlsFileInput.files.length} File(s)`;
+            uploadAdlsBtn.style.background = 'rgba(255, 170, 0, 0.1)';
+        }
+    });
+}

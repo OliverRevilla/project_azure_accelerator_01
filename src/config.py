@@ -8,7 +8,6 @@ logger = logging.getLogger("voice_assistant")
 def validate_env() -> tuple[bool, str]:
     required_vars = [
         "VOICE_LIVE_MODEL",
-        "VOICE_LIVE_VOICE", 
         "AZURE_VOICE_LIVE_API_KEY",
         "AZURE_VOICE_LIVE_ENDPOINT"        
     ]
