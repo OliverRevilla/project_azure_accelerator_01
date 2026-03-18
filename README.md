@@ -271,3 +271,12 @@ We are planning to implement several exciting new features to turn this project 
 *   **Dynamic Personas:** Dynamic configuration in the UI before a session starts to select different voices (e.g., alloy, echo, shimmer, etc.) and system prompts. This allows the assistant to adopt different personas instantly (e.g., travel guide, grumpy pirate, formal assistant).
 *   **Chat History Management:** A new dashboard in the UI allowing users to view past text transcripts from the database. Users will be able to load older sessions and review the context of previous conversations.
 *   **Export Transcription:** An option in the UI that lets users download their session transcripts natively to `.txt` or `.md` files for record-keeping and offline review.
+
+### 🗄️ Azure Data Lake Storage Gen2 (ADLS2) Integration Roadmap
+
+The **Data Lake Upload** widget has been structurally added to the UI of the Voice Assistant. Here are the recommended steps to wire up the backend for full functionality:
+
+1. **Architecture:** Use ADLS2 as the ingestion point for a larger RAG (Retrieval-Augmented Generation) pipeline. Documents uploaded via the UI should be pushed to a specific ADLS2 container. Azure AI Search (or an equivalent indexer) can then securely digest these documents, index them, and make them available to the Voice Assistant as ground-truth context.
+2. **Backend API Endpoint:** Create a new `/upload-document` POST route in `main.py` using `UploadFile` from FastAPI to accept multipart form data.
+3. **Azure Storage SDK:** Use the `azure-storage-file-datalake` Python library (specifically the `DataLakeServiceClient`) to securely stream the incoming files to your ADLS2 filesystem container. You can segregate documents by using the user's `session_id` as the directory path.
+4. **Authentication:** Do not expose Storage Keys or SAS tokens to the frontend. Ensure the FastAPI backend handles the upload entirely. The backend can authenticate with Azure using `DefaultAzureCredential` (which gracefully leverages Managed Identity when deployed to Azure App Service) for secure, keyless access to the storage account.
