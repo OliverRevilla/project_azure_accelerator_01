@@ -2,7 +2,7 @@ import asyncio
 import base64
 import json
 import os
-from typing import cast, Annotated
+from typing import cast, Annotated, Optional
 
 # Load environment variables
 try:
@@ -12,17 +12,19 @@ except ImportError:
     pass
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Response, Cookie, Depends
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
+from pydantic import BaseModel
+from sqlalchemy import func
 
 from config import logger, validate_env, get_env_display
 from session_manager import manager
 from state import SessionState
 from assistant import BasicVoiceAssistant
 # NEW: Import DB init
-from database import init_db 
+from database import init_db, SessionLocal, ChatMessageModel 
 
 # Initialize Tables on startup
 init_db()
@@ -120,8 +122,12 @@ async def sse_endpoint(request: Request, state: SessionState = Depends(get_sessi
 
     return EventSourceResponse(event_generator())
 
+class StartSessionRequest(BaseModel):
+    voice: Optional[str] = None
+    instructions: Optional[str] = None
+
 @app.post("/start-session")
-async def start_session(state: SessionState = Depends(get_session_state)):
+async def start_session(req: StartSessionRequest, state: SessionState = Depends(get_session_state)):
     if state.assistant_task and not state.assistant_task.done():
          return JSONResponse({"started": False, "reason": "Already running"})
 
@@ -129,13 +135,17 @@ async def start_session(state: SessionState = Depends(get_session_state)):
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
 
+    # Allow overriding voice and instructions via the API
+    voice_to_use = req.voice or os.environ.get("VOICE_LIVE_VOICE") or "alloy"
+    instructions_to_use = req.instructions or os.environ.get("VOICE_LIVE_INSTRUCTIONS") or "You are a helpful assistant."
+
     state.assistant_instance = BasicVoiceAssistant(
         state_manager=state,
         endpoint=os.environ.get("AZURE_VOICE_LIVE_ENDPOINT"),
         key=os.environ.get("AZURE_VOICE_LIVE_API_KEY"),
         model=os.environ.get("VOICE_LIVE_MODEL"),
-        voice=os.environ.get("VOICE_LIVE_VOICE"),
-        instructions=os.environ.get("VOICE_LIVE_INSTRUCTIONS") or "You are a helpful assistant."
+        voice=voice_to_use,
+        instructions=instructions_to_use
     )
     
     state.update("starting", "Starting session...")
@@ -180,6 +190,41 @@ async def audio_chunk(request: Request, state: SessionState = Depends(get_sessio
         await assistant.send_audio(b64)
         return {"accepted": True}
     return JSONResponse({"accepted": False}, status_code=400)
+
+@app.get("/export-transcript")
+async def export_transcript(request: Request, session_id: Annotated[str | None, Cookie()] = None):
+    query_id = request.query_params.get("session_id")
+    final_id = session_id or query_id
+    if not final_id:
+        raise HTTPException(status_code=400, detail="No session ID")
+    
+    db = SessionLocal()
+    msgs = db.query(ChatMessageModel).filter(ChatMessageModel.session_id == final_id).order_by(ChatMessageModel.created_at).all()
+    db.close()
+    
+    content = f"Transcript for Session: {final_id}\n"
+    content += "="*50 + "\n\n"
+    for m in msgs:
+        content += f"[{m.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {m.role.upper()}:\n{m.content}\n\n"
+        
+    headers = {"Content-Disposition": f"attachment; filename=transcript_{final_id[:8]}.txt"}
+    return PlainTextResponse(content, headers=headers)
+
+@app.get("/history", response_class=HTMLResponse)
+async def view_history(request: Request):
+    db = SessionLocal()
+    # Get distinct session ids and their last message time
+    sessions = db.query(
+        ChatMessageModel.session_id, 
+        func.max(ChatMessageModel.created_at).label('last_active'),
+        func.count(ChatMessageModel.id).label('msg_count')
+    ).group_by(ChatMessageModel.session_id).order_by(func.max(ChatMessageModel.created_at).desc()).all()
+    db.close()
+    
+    return templates.TemplateResponse("history.html", {
+        "request": request,
+        "sessions": sessions
+    })
 
 @app.websocket("/ws-audio")
 async def websocket_endpoint(websocket: WebSocket):

@@ -7,7 +7,8 @@ const statusBox = document.getElementById('statusBox');
 const statusText = document.getElementById('statusText');
 const statusMsg = document.getElementById('statusMsg');
 const logEl = document.getElementById('log');
-const chatContainer = document.getElementById('chatContainer'); // NEW
+const chatContainer = document.getElementById('chatContainer');
+const exportBtn = document.getElementById('exportBtn');
 
 // =============================
 // CONFIGURATION & STATE
@@ -350,7 +351,20 @@ async function startSession(){
   setSessionButtonState('starting');
   try {
     const url = '/start-session?session_id=' + encodeURIComponent(window.SESSION_ID || '');
-    const response = await fetch(url, {method:'POST'});
+    
+    // Add logic to get voice and instructions
+    const voiceSelect = document.getElementById('personaVoice');
+    const instructionsInput = document.getElementById('personaInstructions');
+    const bodyData = {
+        voice: voiceSelect && voiceSelect.value ? voiceSelect.value : null,
+        instructions: instructionsInput && instructionsInput.value.trim() !== "" ? instructionsInput.value : null
+    };
+
+    const response = await fetch(url, {
+        method:'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyData)
+    });
     const result = await response.json();
     if(!response.ok){
       handleStartSessionError(result, response.status);
@@ -402,6 +416,11 @@ function closeConnections() {
 
 startBtn.addEventListener('click', startSession);
 stopBtn.addEventListener('click', stopSession);
+if (exportBtn) {
+    exportBtn.addEventListener('click', () => {
+        window.location.href = '/export-transcript?session_id=' + encodeURIComponent(window.SESSION_ID || '');
+    });
+}
 window.addEventListener('beforeunload', closeConnections);
 
 openEventSource();

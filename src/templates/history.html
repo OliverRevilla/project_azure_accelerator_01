@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Past Sessions | Real Time Voice</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='50%' x='50%' dominant-baseline='middle' text-anchor='middle' font-size='42'>🎤</text></svg>">
+  <link rel="stylesheet" href="./static/style.css">
+</head>
+<body>
+  <div class="container">
+    <div style="display:flex; justify-content: space-between; align-items: center;">
+      <h1>Past Chat Sessions</h1>
+      <a href="/" style="padding:.6rem 1.2rem;font-size:1rem; text-decoration: none; color: white; background: var(--c-accent); border-radius: 6px;">Return Home</a>
+    </div>
+    <p>View your previous voice and chat sessions here.</p>
+    
+    <div style="margin-top: 2rem;">
+      {% if sessions %}
+        {% for s in sessions %}
+          <div style="border: 1px solid var(--c-border); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; background: var(--c-chat-bg); display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <strong style="font-size: 1.1rem; display: block; margin-bottom: 0.25rem;">Session: {{ s.session_id[:8] }}...</strong>
+              <small style="color: var(--c-muted);">Last Active: {{ s.last_active.strftime('%Y-%m-%d %H:%M:%S') if s.last_active else 'N/A' }} | Messages: {{ s.msg_count }}</small>
+            </div>
+            <div style="display:flex; gap: 0.5rem;">
+                <a href="/?session_id={{ s.session_id }}" style="padding:.5rem 1rem; font-size:0.9rem; text-decoration: none; color: var(--c-accent); border: 1px solid var(--c-accent); border-radius: 6px;">Open Chat</a>
+                <a href="/export-transcript?session_id={{ s.session_id }}" style="padding:.5rem 1rem; font-size:0.9rem; text-decoration: none; color: var(--c-status-ready); background: var(--c-accent); border: 1px solid var(--c-accent); border-radius: 6px;">Export</a>
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p style="color: var(--c-muted); font-style: italic;">No session history found yet. Start talking!</p>
+      {% endif %}
+    </div>
+
+    <footer style="margin-top: 3rem; font-size: 0.7rem; color: var(--c-muted);">
+      <p>Voice live example front-end.</p>
+    </footer>
+  </div>
+</body>
+</html>
