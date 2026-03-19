@@ -11,7 +11,7 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Response, Cookie, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Response, Cookie, Depends, UploadFile, File, Form
 from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -125,6 +125,7 @@ async def sse_endpoint(request: Request, state: SessionState = Depends(get_sessi
 class StartSessionRequest(BaseModel):
     voice: Optional[str] = None
     instructions: Optional[str] = None
+    max_tokens: Optional[int] = 500
 
 @app.post("/start-session")
 async def start_session(req: StartSessionRequest, state: SessionState = Depends(get_session_state)):
@@ -138,6 +139,7 @@ async def start_session(req: StartSessionRequest, state: SessionState = Depends(
     # Allow overriding voice and instructions via the API
     voice_to_use = req.voice or os.environ.get("VOICE_LIVE_VOICE") or "alloy"
     instructions_to_use = req.instructions or os.environ.get("VOICE_LIVE_INSTRUCTIONS") or "You are a helpful assistant."
+    max_tokens_to_use = max(100, min(1000, req.max_tokens or 500))
 
     state.assistant_instance = BasicVoiceAssistant(
         state_manager=state,
@@ -145,7 +147,8 @@ async def start_session(req: StartSessionRequest, state: SessionState = Depends(
         key=os.environ.get("AZURE_VOICE_LIVE_API_KEY"),
         model=os.environ.get("VOICE_LIVE_MODEL"),
         voice=voice_to_use,
-        instructions=instructions_to_use
+        instructions=instructions_to_use,
+        max_tokens=max_tokens_to_use
     )
     
     state.update("starting", "Starting session...")
@@ -190,6 +193,72 @@ async def audio_chunk(request: Request, state: SessionState = Depends(get_sessio
         await assistant.send_audio(b64)
         return {"accepted": True}
     return JSONResponse({"accepted": False}, status_code=400)
+
+@app.post("/upload-file")
+async def upload_file(
+    file: UploadFile = File(...),
+    storage_type: str = Form(...),
+    bucket_url: str = Form(...)
+):
+    """Upload a PDF, TXT, or XLSX file to a cloud storage bucket."""
+    allowed_exts = {".pdf", ".txt", ".xlsx"}
+    filename = file.filename or "upload"
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail=f"File type '{ext}' not allowed. Use .pdf, .txt, or .xlsx.")
+
+    content = await file.read()
+
+    try:
+        if storage_type == "s3":
+            import boto3
+            from urllib.parse import urlparse
+            parsed = urlparse(bucket_url)
+            bucket_name = parsed.netloc or parsed.path.strip("/").split("/")[0]
+            s3 = boto3.client("s3")
+            s3.put_object(Bucket=bucket_name, Key=filename, Body=content)
+
+        elif storage_type == "gcs":
+            from google.cloud import storage as gcs
+            from urllib.parse import urlparse
+            parsed = urlparse(bucket_url)
+            bucket_name = parsed.netloc or parsed.path.strip("/").split("/")[0]
+            client = gcs.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(filename)
+            blob.upload_from_string(content)
+
+        elif storage_type == "adls2":
+            from azure.storage.blob import BlobServiceClient
+            from urllib.parse import urlparse
+            parsed = urlparse(bucket_url)
+            # Expect https://accountname.dfs.core.windows.net/containername
+            # Convert dfs endpoint to blob endpoint for SDK compatibility
+            hostname = parsed.hostname or ""
+            if ".dfs." in hostname:
+                hostname = hostname.replace(".dfs.", ".blob.")
+            account_url = f"https://{hostname}"
+            path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+            container_name = path_parts[0] if path_parts else "uploads"
+            account_key = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY", "")
+            service_client = BlobServiceClient(account_url=account_url, credential=account_key or None)
+            container_client = service_client.get_container_client(container_name)
+            blob_client = container_client.get_blob_client(filename)
+            blob_client.upload_blob(content, overwrite=True)
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown storage type: {storage_type}")
+
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail=f"Storage library not installed: {exc}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"File upload error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(exc)}")
+
+    return {"success": True, "filename": filename, "storage": storage_type}
+
 
 @app.get("/export-transcript")
 async def export_transcript(request: Request, session_id: Annotated[str | None, Cookie()] = None):

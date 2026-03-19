@@ -18,13 +18,14 @@ from azure.ai.voicelive.models import (
 
 class BasicVoiceAssistant:
     # Async wrapper for Azure Voice Live
-    def __init__(self, state_manager,endpoint:str, key:str, model:str, voice:str, instructions: str):
+    def __init__(self, state_manager, endpoint: str, key: str, model: str, voice: str, instructions: str, max_tokens: int = 500):
         self.state_manager = state_manager
         self.endpoint = endpoint
         self.key = key
         self.voice = voice
         self.model = model
         self.instructions = instructions
+        self.max_tokens = max(100, min(1000, max_tokens))
         self.connection = None
         self._response_cancelled = False,
         self._stopping = False
@@ -49,14 +50,21 @@ class BasicVoiceAssistant:
 
                 voice_cfg = AzureStandardVoice(name=self.voice) if "-" in self.voice else self.voice
 
-                await conn.session.update(session=RequestSession(
+                session_params = dict(
                     modalities=[Modality.TEXT, Modality.AUDIO],
                     instructions=self.instructions,
                     voice=voice_cfg,
                     input_audio_format=InputAudioFormat.PCM16,
                     output_audio_format=OutputAudioFormat.PCM16,
-                    turn_detection=ServerVad(threshold=0.5, prefix_padding_ms=300, silence_duration_ms=500)
-                ))
+                    turn_detection=ServerVad(threshold=0.5, prefix_padding_ms=300, silence_duration_ms=500),
+                )
+                # max_response_output_tokens is supported by the Realtime API spec
+                try:
+                    session_params["max_response_output_tokens"] = self.max_tokens
+                except Exception:
+                    pass
+
+                await conn.session.update(session=RequestSession(**session_params))
 
                 self.state_manager.update("ready", "Session Ready. Speak now.")
 

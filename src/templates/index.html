@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='50%' x='50%' dominant-baseline='middle' text-anchor='middle' font-size='42'>🎤</text></svg>">
   <link rel="stylesheet" href="./static/style.css">
-  
+
   <script>
     // Critical: Inject ID for JS fallback
     window.SESSION_ID = "{{ session_id }}";
@@ -16,36 +16,75 @@
 <body>
   <div class="container">
     <h1>Real-Time Voice Demo</h1>
-  <p>This page streams <strong>your microphone audio</strong> to the server and plays the assistant's synthesized audio. Grant microphone permission when prompted. You can begin speaking when <strong>Status:</strong> ready.</p>
-    <div style="margin:1rem 0;display:flex;gap:.75rem;flex-wrap:wrap; align-items: flex-end;">
+    <p>This page streams <strong>your microphone audio</strong> to the server and plays the assistant's synthesized audio. Grant microphone permission when prompted. You can begin speaking when <strong>Status:</strong> ready.</p>
+
+    <!-- Voice persona & instructions row -->
+    <div style="margin:1rem 0;display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end;">
       <div>
-        <label for="personaVoice" style="display:block; font-size: 0.85rem; margin-bottom: 0.25rem;">Voice Persona</label>
-        <select id="personaVoice" style="padding: 0.5rem; border-radius: 4px; border: 1px solid var(--c-border); background: var(--c-bg); color: var(--c-fg);">
-            <option value="alloy">Alloy (Neutral)</option>
-            <option value="echo">Echo (Male)</option>
-            <option value="shimmer">Shimmer (Female)</option>
+        <label for="personaVoice" style="display:block;font-size:0.85rem;margin-bottom:0.25rem;">Voice Persona</label>
+        <select id="personaVoice">
+          <option value="alloy">Alloy (Neutral)</option>
+          <option value="echo">Echo (Male)</option>
+          <option value="shimmer">Shimmer (Female)</option>
         </select>
       </div>
-      <div style="flex-grow: 1;">
-        <label for="personaInstructions" style="display:block; font-size: 0.85rem; margin-bottom: 0.25rem;">System Instructions</label>
-        <input type="text" id="personaInstructions" placeholder="You are a helpful assistant..." style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid var(--c-border); background: var(--c-bg); color: var(--c-fg);">
+      <div style="flex-grow:1;">
+        <label for="personaInstructions" style="display:block;font-size:0.85rem;margin-bottom:0.25rem;">System Instructions</label>
+        <input type="text" id="personaInstructions" placeholder="You are a helpful assistant..." style="width:100%;">
       </div>
     </div>
+
+    <!-- Token limit slider -->
+    <div class="token-row">
+      <label for="tokenLimit">Max Response Tokens:</label>
+      <input type="range" id="tokenLimit" min="100" max="1000" step="50" value="500">
+      <span class="token-value" id="tokenLimitDisplay">500</span>
+    </div>
+
+    <!-- File upload section -->
+    <details class="upload-section">
+      <summary>&#8593; Upload Personal Data (PDF, TXT, XLSX)</summary>
+      <div class="upload-controls">
+        <div>
+          <label for="storageType">Storage Provider</label>
+          <select id="storageType">
+            <option value="s3">AWS S3</option>
+            <option value="gcs">Google Cloud Storage</option>
+            <option value="adls2">Azure Data Lake Gen2</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <label for="bucketUrl">Bucket / Container URL</label>
+          <input type="text" id="bucketUrl" placeholder="s3://my-bucket  |  gs://my-bucket  |  https://account.dfs.core.windows.net/container" style="width:100%;">
+        </div>
+        <div>
+          <label for="fileUpload">Select File</label>
+          <input type="file" id="fileUpload" accept=".pdf,.txt,.xlsx" style="color:var(--c-fg);">
+        </div>
+        <div>
+          <button id="uploadBtn" style="padding:.6rem 1.2rem;font-size:1rem;">Upload File</button>
+        </div>
+      </div>
+      <div id="uploadStatus"></div>
+    </details>
+
+    <!-- Session action buttons -->
     <div style="margin:1rem 0;display:flex;gap:.75rem;flex-wrap:wrap;">
       <button id="startBtn" style="padding:.6rem 1.2rem;font-size:1rem;">Start Session</button>
       <button id="stopBtn" style="padding:.6rem 1.2rem;font-size:1rem;" disabled>Stop Session</button>
-      <button id="exportBtn" style="padding:.6rem 1.2rem;font-size:1rem; background: var(--c-status-ready); color: var(--c-accent); border: 1px solid var(--c-accent);">Export Transcript</button>
-      <a href="/history" style="padding:.6rem 1.2rem;font-size:1rem; text-decoration: none; color: var(--c-accent); border: 1px solid var(--c-accent); border-radius: 6px; display: inline-block;">Past Sessions</a>
+      <button id="exportBtn" style="padding:.6rem 1.2rem;font-size:1rem;">Export Transcript</button>
+      <a href="/history" class="btn-link">Past Sessions</a>
     </div>
-    <div id="statusBox" style="padding:.75rem 1rem;border:1px solid #ccc;border-radius:6px;background:#f9f9f9;min-height:3.25rem;">
+
+    <!-- Status box -->
+    <div id="statusBox" style="padding:.75rem 1rem;border-radius:6px;min-height:3.25rem;">
       <strong>Status:</strong> <span id="statusText">Idle</span><br/>
       <small id="statusMsg">Click Start to begin a voice session.</small>
     </div>
 
-    <!-- NEW: Chat History Container -->
+    <!-- Chat history container -->
     <div id="chatContainer" class="chat-container">
-        <!-- Messages will be injected here via JS -->
-        <div class="chat-placeholder">Conversation history will appear here...</div>
+      <div class="chat-placeholder">Conversation history will appear here...</div>
     </div>
 
     <details style="margin-top:1rem;">
@@ -57,14 +96,14 @@
         <li><code>VOICE_LIVE_INSTRUCTIONS: {{ env.VOICE_LIVE_INSTRUCTIONS }}</code></li>
       </ul>
     </details>
+
     <h3 style="margin-top:1.75rem;">Logs</h3>
     <div id="log" aria-live="polite"></div>
     <p><small>Only recent ~250 lines kept in memory.</small></p>
 
-    <!-- Cache Buster added to src to force reload of new app.js -->
     <script src="./static/app.js?v={{ session_id }}"></script>
     <footer>
-      <p>Voice live example front-end (browser PCM16 streaming & SSE playback).</p>
+      <p>Voice live example front-end (browser PCM16 streaming &amp; SSE playback).</p>
     </footer>
   </div>
 </body>

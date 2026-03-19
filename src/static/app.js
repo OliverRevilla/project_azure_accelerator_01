@@ -9,6 +9,16 @@ const statusMsg = document.getElementById('statusMsg');
 const logEl = document.getElementById('log');
 const chatContainer = document.getElementById('chatContainer');
 const exportBtn = document.getElementById('exportBtn');
+const uploadBtn = document.getElementById('uploadBtn');
+const tokenLimitSlider = document.getElementById('tokenLimit');
+const tokenLimitDisplay = document.getElementById('tokenLimitDisplay');
+
+// ── TOKEN LIMIT SLIDER ────────────────────────────────────
+if (tokenLimitSlider && tokenLimitDisplay) {
+  tokenLimitSlider.addEventListener('input', () => {
+    tokenLimitDisplay.textContent = tokenLimitSlider.value;
+  });
+}
 
 // =============================
 // CONFIGURATION & STATE
@@ -352,12 +362,14 @@ async function startSession(){
   try {
     const url = '/start-session?session_id=' + encodeURIComponent(window.SESSION_ID || '');
     
-    // Add logic to get voice and instructions
+    // Add logic to get voice, instructions, and token limit
     const voiceSelect = document.getElementById('personaVoice');
     const instructionsInput = document.getElementById('personaInstructions');
+    const tokenSlider = document.getElementById('tokenLimit');
     const bodyData = {
         voice: voiceSelect && voiceSelect.value ? voiceSelect.value : null,
-        instructions: instructionsInput && instructionsInput.value.trim() !== "" ? instructionsInput.value : null
+        instructions: instructionsInput && instructionsInput.value.trim() !== "" ? instructionsInput.value : null,
+        max_tokens: tokenSlider ? parseInt(tokenSlider.value, 10) : 500
     };
 
     const response = await fetch(url, {
@@ -422,5 +434,65 @@ if (exportBtn) {
     });
 }
 window.addEventListener('beforeunload', closeConnections);
+
+// =============================
+// FILE UPLOAD
+// =============================
+if (uploadBtn) {
+    uploadBtn.addEventListener('click', async () => {
+        const fileInput = document.getElementById('fileUpload');
+        const storageType = document.getElementById('storageType');
+        const bucketUrl = document.getElementById('bucketUrl');
+        const statusEl = document.getElementById('uploadStatus');
+
+        if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+            statusEl.textContent = 'Please select a file first.';
+            statusEl.className = 'error';
+            return;
+        }
+        if (!bucketUrl || !bucketUrl.value.trim()) {
+            statusEl.textContent = 'Please enter a bucket/container URL.';
+            statusEl.className = 'error';
+            return;
+        }
+
+        const file = fileInput.files[0];
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (!['pdf', 'txt', 'xlsx'].includes(ext)) {
+            statusEl.textContent = 'Only PDF, TXT, and XLSX files are allowed.';
+            statusEl.className = 'error';
+            return;
+        }
+
+        statusEl.textContent = 'Uploading…';
+        statusEl.className = '';
+        uploadBtn.disabled = true;
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('storage_type', storageType ? storageType.value : 's3');
+        formData.append('bucket_url', bucketUrl.value.trim());
+
+        try {
+            const res = await fetch('/upload-file', { method: 'POST', body: formData });
+            const json = await res.json();
+            if (res.ok && json.success) {
+                statusEl.textContent = `✓ "${json.filename}" uploaded to ${json.storage} successfully.`;
+                statusEl.className = 'success';
+                log(`File uploaded: ${json.filename} → ${json.storage}`);
+            } else {
+                statusEl.textContent = `Upload failed: ${json.detail || JSON.stringify(json)}`;
+                statusEl.className = 'error';
+                log('Upload failed: ' + (json.detail || JSON.stringify(json)), 'error');
+            }
+        } catch (err) {
+            statusEl.textContent = 'Upload error: ' + err.message;
+            statusEl.className = 'error';
+            log('Upload error: ' + err.message, 'error');
+        } finally {
+            uploadBtn.disabled = false;
+        }
+    });
+}
 
 openEventSource();
